@@ -1,0 +1,52 @@
+name: Publish workstation release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. 1.0.0'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel'
+        type: choice
+        options: [beta, stable]
+        default: beta
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and package workstation
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo 'Invalid SemVer'; exit 1; }
+          test -f core/Launcher.ps1 || { echo 'No validated core/Launcher.ps1 yet. Import/test before publishing.'; exit 1; }
+          test -f core/Dock.ps1 || exit 1
+          test -f core/Watchdog.ps1 || exit 1
+          test -f installer/Install-Update.ps1 || { echo 'Missing updater installer'; exit 1; }
+          mkdir -p dist/package/core dist/package/brands dist/package/installer
+          cp core/*.ps1 dist/package/core/
+          cp -r brands/. dist/package/brands/
+          cp installer/Install-Update.ps1 dist/package/installer/
+          printf '{"version":"%s","channel":"%s"}\n' "$VERSION" "$CHANNEL" > dist/package/version.json
+          (cd dist/package && zip -qr ../workstation.zip .)
+          cd dist
+          sha256sum workstation.zip > workstation.zip.sha256
+          SHA=$(sha256sum workstation.zip | cut -d' ' -f1)
+          printf '{"schemaVersion":1,"version":"%s","channel":"%s","asset":"workstation.zip","sha256":"%s"}\n' "$VERSION" "$CHANNEL" "$SHA" > update-manifest.json
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          [ "$CHANNEL" = beta ] && FLAGS="--prerelease" || FLAGS=""
+          gh release create "$TAG" dist/workstation.zip dist/workstation.zip.sha256 dist/update-manifest.json --title "Workstation $TAG" --notes "Shared workstation core and manufacturer profiles. Does not contain OEM diagnostics." $FLAGS
