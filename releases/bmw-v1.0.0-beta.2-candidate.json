@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "brand": "bmw",
+  "candidateVersion": "1.0.0-beta.2",
+  "state": "candidate-not-published",
+  "packageSha256": "50b560bbffca3e8980f14f0b7c96cf175c54515a6443470598adf024bb9dc598",
+  "sourceFiles": [
+    "Launcher.ps1",
+    "Dock.ps1",
+    "Watchdog.ps1",
+    "SystemPanel.ps1",
+    "UpdateAgent.ps1",
+    "ApplyUpdate.ps1"
+  ],
+  "fixes": [
+    "anchor SYSTEM popup to button",
+    "display no verified release correctly"
+  ],
+  "releaseBlockedBy": [
+    "Windows PowerShell runtime smoke test",
+    "rollback and watchdog health-check tests",
+    "core source import to GitHub",
+    "GitHub Release asset publish"
+  ],
+  "warning": "Do not auto-install; installer health-check is not production-verified."
+}
