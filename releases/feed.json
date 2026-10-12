@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "releaseSource": "https://api.github.com/repos/wilesy7404/diagnostic-workstation/releases",
+  "status": "awaiting-first-verified-release",
+  "channels": [
+    "beta",
+    "stable"
+  ],
+  "supportedBrands": [
+    "bmw",
+    "mercedes",
+    "porsche",
+    "vw-audi",
+    "toyota",
+    "ford",
+    "honda",
+    "gm",
+    "jlr"
+  ],
+  "note": "This file is discovery metadata, not an update version announcement."
+}
