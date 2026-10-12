@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "jlr",
+  "displayName": "Jaguar Land Rover",
+  "profileVersion": "0.1.0",
+  "coreCompatibility": ">=1.0.0",
+  "accentColor": "#79A9D8",
+  "defaultDiagnosticLabel": "Pathfinder / TOPIx",
+  "apps": [],
+  "note": "Defaults only. Local application paths and user-defined cards must be preserved."
+}
