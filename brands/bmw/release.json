@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "brand": "bmw",
+  "channel": "beta",
+  "version": "1.0.0-beta.1",
+  "coreVersion": "1.0.0-beta.1",
+  "releaseState": "source-preview",
+  "downloadableAutoUpdate": false,
+  "releaseNotes": "Initial beta SYSTEM panel source. Pending integration with latest verified BMW launcher and dock.",
+  "status": "not-published"
+}
