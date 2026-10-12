@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "bmw",
+  "displayName": "BMW",
+  "profileVersion": "0.1.0",
+  "coreCompatibility": ">=1.0.0",
+  "accentColor": "#4EACFF",
+  "defaultDiagnosticLabel": "ISTA+",
+  "apps": [],
+  "note": "Defaults only. Local application paths and user-defined cards must be preserved."
+}
