@@ -1,0 +1,46 @@
+name: Validate workstation package
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check PowerShell source syntax
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -Path core,installer -Filter '*.ps1' -Recurse -ErrorAction SilentlyContinue)
+          if ($files.Count -eq 0) { throw 'No PowerShell files found' }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName,[ref]$tokens,[ref]$errors)
+            if ($errors.Count) {
+              foreach ($problem in $errors) { Write-Error "$($file.FullName): $($problem.Message)" }
+              throw "Syntax validation failed in $($file.Name)"
+            }
+          }
+      - name: Check brand profile JSON
+        shell: pwsh
+        run: |
+          $profiles = @(Get-ChildItem brands -Filter profile.json -Recurse)
+          if ($profiles.Count -lt 9) { throw 'Expected nine manufacturer profiles' }
+          foreach ($file in $profiles) {
+            $profile = Get-Content $file.FullName -Raw | ConvertFrom-Json
+            if (-not $profile.id -or -not $profile.displayName) { throw "Invalid profile: $($file.FullName)" }
+          }
+      - name: Check release safety boundaries
+        shell: pwsh
+        run: |
+          $protected = @('apps.json','device.json','secrets.json')
+          foreach ($name in $protected) {
+            if (Get-ChildItem -Path core,installer,brands -Filter $name -Recurse -ErrorAction SilentlyContinue) {
+              throw "Protected local config found in release source: $name"
+            }
+          }
+          Write-Host 'Source checks passed. Runtime/UI testing still required.'
