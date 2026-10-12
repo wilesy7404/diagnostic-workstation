@@ -1,0 +1,15 @@
+*.log
+*.tmp
+*.bak
+*.backup
+Backup-*/
+*.pfx
+*.p12
+*.key
+.env
+.env.*
+apps.json
+device.json
+secrets.json
+**/local-config/**
+**/credentials/**
