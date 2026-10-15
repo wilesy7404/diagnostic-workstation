@@ -1,0 +1,82 @@
+{
+    "brand":  "BMW",
+    "export_utc":  "2026-10-15T01:15:50.1956877Z",
+    "description":  "Snapshot of installed workstation source, not a reconstructed release",
+    "files":  [
+                  {
+                      "path":  "ApplyUpdate.ps1",
+                      "bytes":  5242,
+                      "sha256":  "0e1ee766fbb09da023bfc3d0dd893a4e94bfff5ab8824216565dc8508115220a"
+                  },
+                  {
+                      "path":  "BMWWorkstationControls.ps1",
+                      "bytes":  21507,
+                      "sha256":  "70fad854d93f035afbbdf1a42c8cc11394eef167df4ba77852f0981e06f60ae8"
+                  },
+                  {
+                      "path":  "Dock.ps1",
+                      "bytes":  16180,
+                      "sha256":  "11dc722fc3b4e9a49eeb8391615e3c60726cc5a9db7a85da35993f53c804f8aa"
+                  },
+                  {
+                      "path":  "Launcher.before-shortcut-refresh-20261012-152554.ps1",
+                      "bytes":  21118,
+                      "sha256":  "0b7338cab59c89b08625e9d7908b660f45c41ae1c8da533366b2b4a88d6174b4"
+                  },
+                  {
+                      "path":  "Launcher.before-updater-20261012-153610.ps1",
+                      "bytes":  22880,
+                      "sha256":  "eb1c8bffad95911835ad856707efe45cd4034efc8e0df7c2bd48a367c69c916e"
+                  },
+                  {
+                      "path":  "Launcher.ps1",
+                      "bytes":  25669,
+                      "sha256":  "2cf5400e41f92cf999826c5ea4cce8c80767ac92cc7cb13d387d0ebde9e7954b"
+                  },
+                  {
+                      "path":  "Restart-BMW-Controls.ps1",
+                      "bytes":  1125,
+                      "sha256":  "e6b83656840df36c9ce059e23080faf0f77275f94410d62f33dc954878e97672"
+                  },
+                  {
+                      "path":  "Restore-BMW-ExplorerShell.ps1",
+                      "bytes":  986,
+                      "sha256":  "5c7042977a751d0978da489f64253415fe923b87d788be6794a5221756e68054"
+                  },
+                  {
+                      "path":  "Rollback-BMW-Controls-v1.ps1",
+                      "bytes":  1438,
+                      "sha256":  "ca0e91b41ae8ace1e847c3d1cdd6278e8f5b5aa2ef7dfc0c50c47b291225bd4c"
+                  },
+                  {
+                      "path":  "Save-Approved-BMW.ps1",
+                      "bytes":  2958,
+                      "sha256":  "a696cd53e3c88f2040fe53d039ecb9f0b010f88df13e6b00be0bbb41355a0dd6"
+                  },
+                  {
+                      "path":  "SystemPanel.ps1",
+                      "bytes":  8025,
+                      "sha256":  "519196d8600a01ff3d50ac4557368d5f596425fc6e0fdd4a7cbbeed99b5c61e6"
+                  },
+                  {
+                      "path":  "UpdateAgent.ps1",
+                      "bytes":  10482,
+                      "sha256":  "7050a15c676535ba70b6e783d94d5c8f108d5d77d01be53f939075dadae19297"
+                  },
+                  {
+                      "path":  "UpdateRunner.ps1",
+                      "bytes":  4475,
+                      "sha256":  "78cfb6b0a8db5634bf218408bcf729ca9aa76d08ae1b44e1193b6d4e1363ca13"
+                  },
+                  {
+                      "path":  "version.json",
+                      "bytes":  26,
+                      "sha256":  "73d5767181254ab18abf134e92f62a78ee858449cc17dd38fbaa506e185afa10"
+                  },
+                  {
+                      "path":  "Watchdog.ps1",
+                      "bytes":  1279,
+                      "sha256":  "33ebfec7bf2c62ee6f009b667bbefffee83c5048f38bcafaf2ae012efbe99283"
+                  }
+              ]
+}

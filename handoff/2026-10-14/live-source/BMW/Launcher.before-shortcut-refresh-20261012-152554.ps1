@@ -1,0 +1,246 @@
+# BMW Stealth Launcher v2 | Windows PowerShell 5.1 | WPF
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Windows.Forms,System.Drawing
+Add-Type @'
+using System;using System.Runtime.InteropServices;
+public static class BMWNative {
+ [DllImport("user32.dll",CharSet=CharSet.Auto)] public static extern IntPtr FindWindow(string cls,string title);
+ [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd,int command);
+}
+'@
+$root=Split-Path -Parent $MyInvocation.MyCommand.Path
+$config=Join-Path $root 'apps.json'
+$script:apps=@()
+$script:hidden=$false
+function Taskbar([bool]$hide) {
+ $action=if($hide){0}else{5}
+ foreach($cls in @('Shell_TrayWnd','Shell_SecondaryTrayWnd')) {
+  $hw=[BMWNative]::FindWindow($cls,$null)
+  if($hw -ne [IntPtr]::Zero){[void][BMWNative]::ShowWindow($hw,$action)}
+ }
+ $script:hidden=$hide
+}
+function Load-Apps {
+ if(Test-Path $config){
+  $data=Get-Content $config -Raw -Encoding UTF8 | ConvertFrom-Json
+  $script:apps=@($data.apps)
+ }
+}
+function Save-Apps {
+ @{apps=@($script:apps)} | ConvertTo-Json -Depth 9 | Set-Content $config -Encoding UTF8
+}
+function Brush($value){New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.ColorConverter]::ConvertFromString($value))}
+function Image-Source($path) {
+ if(-not $path -or -not(Test-Path -LiteralPath $path)){return $null}
+ try {
+  if([IO.Path]::GetExtension($path) -ieq '.exe'){
+   $icon=[Drawing.Icon]::ExtractAssociatedIcon($path)
+   if(-not $icon){return $null}
+   try{return [Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($icon.Handle,[Windows.Int32Rect]::Empty,[Windows.Media.Imaging.BitmapSizeOptions]::FromWidthAndHeight(96,96))} finally {$icon.Dispose()}
+  }
+  if([IO.Path]::GetExtension($path) -ieq '.lnk'){return $null}
+  $bitmap=New-Object Windows.Media.Imaging.BitmapImage
+  $bitmap.BeginInit(); $bitmap.UriSource=New-Object Uri($path);$bitmap.CacheOption=[Windows.Media.Imaging.BitmapCacheOption]::OnLoad;$bitmap.EndInit();$bitmap.Freeze();return $bitmap
+ } catch {return $null}
+}
+function File-Pick([string]$current,[bool]$image=$false){
+ $dlg=New-Object Microsoft.Win32.OpenFileDialog
+ $dlg.Filter=if($image){'Pictures|*.png;*.jpg;*.jpeg;*.bmp;*.ico|All files|*.*'}else{'Applications and shortcuts|*.exe;*.lnk;*.bat;*.cmd|All files|*.*'}
+ if($current -and (Test-Path $current)){$dlg.InitialDirectory=Split-Path $current -Parent}
+ if($dlg.ShowDialog() -eq $true){return $dlg.FileName}
+ return $null
+}
+$windowXaml=@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="BMW Diagnostic System" WindowStyle="None" WindowState="Maximized" ResizeMode="NoResize" ShowInTaskbar="True" Background="#080D14" FontFamily="Segoe UI">
+ <Window.Resources>
+  <Style x:Key="Tile" TargetType="Button">
+   <Setter Property="Background" Value="#E51A2637"/><Setter Property="BorderBrush" Value="#7694B2CF"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Margin" Value="11"/><Setter Property="Padding" Value="17"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="19" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/></Border><ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="surface" Property="Background" Value="#F020344C"/><Setter TargetName="surface" Property="BorderBrush" Value="#99C0E9"/></Trigger>
+     <Trigger Property="IsPressed" Value="True"><Setter TargetName="surface" Property="Background" Value="#F0284C73"/></Trigger>
+   </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="Ghost" TargetType="Button"><Setter Property="Background" Value="#D7111E2D"/><Setter Property="BorderBrush" Value="#75809DB9"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Foreground" Value="#E7F2FF"/><Setter Property="Padding" Value="16,9"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+  <Style x:Key="FooterButton" TargetType="Button">
+   <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="12,6"/><Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="bg" CornerRadius="14" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bg" Property="Background" Value="#385A86B5"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="bg" Property="Background" Value="#5D7C9ABB"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+ </Window.Resources>
+ <Grid x:Name="Canvas">
+  <Border Background="#42040A14"/>
+  <Border VerticalAlignment="Top" Height="70" Background="#33080F19"/>
+
+  <Grid Margin="35,13,35,21">
+   <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="*"/><RowDefinition Height="60"/></Grid.RowDefinitions>
+   <Grid Grid.Row="0">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <Border Grid.Column="0" CornerRadius="27" Width="46" Height="46" Background="#E8EAF0F7" BorderBrush="#B5D7F6" BorderThickness="1" VerticalAlignment="Center">
+     <Grid Margin="4"><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <Border Background="#B6E1FF" Grid.Row="0" Grid.Column="0" CornerRadius="22,0,0,0"/>
+       <Border Background="#254A78" Grid.Row="0" Grid.Column="1" CornerRadius="0,22,0,0"/>
+       <Border Background="#254A78" Grid.Row="1" Grid.Column="0" CornerRadius="0,0,0,22"/>
+       <Border Background="#B6E1FF" Grid.Row="1" Grid.Column="1" CornerRadius="0,0,22,0"/>
+     </Grid>
+    </Border>
+    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="13,0,0,0">
+      <Border Width="1" Background="#63A9E0" Margin="0,7,13,7"/>
+      <StackPanel VerticalAlignment="Center"><TextBlock Text="BMW" FontSize="22" FontWeight="SemiBold" Foreground="#F3F8FF"/><TextBlock Text="DIAGNOSTIC WORKSTATION" FontSize="9" FontWeight="SemiBold" Foreground="#7FB9EB"/></StackPanel>
+    </StackPanel>
+    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right"><Border Width="1" Height="37" Margin="0,0,15,0" Background="#7BBDD8F2"/><StackPanel VerticalAlignment="Center"><TextBlock Text="LOCAL TIME" HorizontalAlignment="Right" Foreground="#AAC8E0" FontSize="9"/><TextBlock x:Name="Clock" HorizontalAlignment="Right" Foreground="#F3F8FF" FontSize="15" FontWeight="SemiBold"/></StackPanel></StackPanel>
+   </Grid>
+   <Grid Grid.Row="1">
+     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Center"><ItemsControl x:Name="Tiles" HorizontalAlignment="Center" VerticalAlignment="Center"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel HorizontalAlignment="Center"/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl></ScrollViewer>
+     <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" Margin="12" MaxWidth="530">
+      <Border Background="#B7122436" BorderBrush="#5376A7D2" BorderThickness="1" CornerRadius="18" Padding="24">
+       <StackPanel><TextBlock Text="READY FOR DIAGNOSTICS" HorizontalAlignment="Center" Foreground="#F2F7FF" FontSize="24" FontWeight="Light"/><TextBlock Text="Your BMW workspace is ready. Open ADMIN to add a diagnostic application, choose an icon, and launch it from here." TextAlignment="Center" TextWrapping="Wrap" Foreground="#B3C6DC" FontSize="13" Margin="12,12,12,0"/></StackPanel>
+      </Border>
+     </StackPanel>
+   </Grid>
+   <DockPanel Grid.Row="2" LastChildFill="False" VerticalAlignment="Bottom" Margin="0,0,0,3">
+    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center"><Border Width="22" Height="2" Background="#3D9EDB" Margin="0,0,10,0"/><TextBlock Foreground="#AFC6DF" FontSize="11" VerticalAlignment="Center" Text="CONNECT   /   DIAGNOSE   /   MAINTAIN"/></StackPanel>
+    <Border DockPanel.Dock="Right" CornerRadius="22" Background="#62121E30" BorderBrush="#729BB8D3" BorderThickness="1" Padding="10,3">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+       <Button x:Name="SystemButton" Style="{StaticResource FooterButton}">
+        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#DCEBFA" VerticalAlignment="Center" Margin="0,0,9,0"/><TextBlock Text="SYSTEM" Foreground="White" FontSize="11" VerticalAlignment="Center"/></StackPanel>
+       </Button>
+       <Border Width="1" Height="23" Background="#7797B3CD" Margin="7,0" VerticalAlignment="Center"/>
+       <Button x:Name="AdminButton" Style="{StaticResource FooterButton}">
+        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#DCEBFA" VerticalAlignment="Center" Margin="0,0,9,0"/><TextBlock Text="ADMIN" Foreground="White" FontSize="11" VerticalAlignment="Center"/></StackPanel>
+       </Button>
+      </StackPanel>
+     </Border>
+   </DockPanel>
+  </Grid>
+ </Grid>
+</Window>
+'@
+# WPF TextBlock doesn't support LetterSpacing; remove attribute before loading.
+$windowXaml=$windowXaml -replace ' LetterSpacing="1"',''
+$window=[Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader ([xml]$windowXaml)))
+$tiles=$window.FindName('Tiles');$canvas=$window.FindName('Canvas');$clock=$window.FindName('Clock')
+$adminButton=$window.FindName('AdminButton');$systemButton=$window.FindName('SystemButton')
+function Apply-Wallpaper {
+ $wall=(Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).Wallpaper
+ $source=Image-Source $wall
+ if($source){$brush=New-Object Windows.Media.ImageBrush($source);$brush.Stretch='UniformToFill';$canvas.Background=$brush}
+}
+function Make-Card($app){
+ $btn=New-Object Windows.Controls.Button
+ $btn.Style=$window.FindResource('Tile');$btn.Width=222;$btn.Height=210;$btn.Tag=[string]$app.name
+ $body=New-Object Windows.Controls.Grid
+ $body.RowDefinitions.Add((New-Object Windows.Controls.RowDefinition))
+ $row=New-Object Windows.Controls.RowDefinition;$row.Height=[Windows.GridLength]::Auto;$body.RowDefinitions.Add($row)
+ $iconPane=New-Object Windows.Controls.Grid;$iconPane.VerticalAlignment='Center';$iconPane.HorizontalAlignment='Center';$iconPane.Height=115
+ $custom=Image-Source ([string]$app.icon)
+ if(-not $custom){$custom=Image-Source ([string]$app.path)}
+ if($custom){
+  $im=New-Object Windows.Controls.Image;$im.Source=$custom;$im.Width=86;$im.Height=86;$im.Stretch='Uniform';$iconPane.Children.Add($im)|Out-Null
+ } else {
+  $symbol=New-Object Windows.Controls.TextBlock;$symbol.Text=if($app.symbol){[string]$app.symbol}else{[string]$app.name.Substring(0,[Math]::Min(2,$app.name.Length))}
+  $symbol.Foreground=Brush '#E4EBF5';$symbol.FontSize=36;$symbol.FontWeight='Light';$symbol.TextAlignment='Center';$symbol.VerticalAlignment='Center';$symbol.HorizontalAlignment='Center';$iconPane.Children.Add($symbol)|Out-Null
+ }
+ $body.Children.Add($iconPane)|Out-Null
+ $label=New-Object Windows.Controls.StackPanel;$label.Margin='0,4,0,5'
+ $name=New-Object Windows.Controls.TextBlock;$name.Text=[string]$app.name;$name.Foreground=Brush '#F5F7FA';$name.FontSize=17;$name.FontWeight='SemiBold';$name.TextAlignment='Center';$name.TextWrapping='Wrap';$name.MaxWidth=190
+ $state=New-Object Windows.Controls.TextBlock;$state.Text=if($app.path -and (Test-Path ([string]$app.path))){'LAUNCH SYSTEM'}else{'NOT CONFIGURED'};$state.Foreground=Brush '#9AAABA';$state.FontSize=10;$state.Margin='0,9,0,0';$state.TextAlignment='Center'
+ $label.Children.Add($name)|Out-Null;$label.Children.Add($state)|Out-Null
+ [Windows.Controls.Grid]::SetRow($label,1);$body.Children.Add($label)|Out-Null
+ $btn.Content=$body
+ $btn.Add_Click({
+  param($sender,$ev)
+  $selected=$script:apps | Where-Object { $_.name -eq $sender.Tag } | Select-Object -First 1
+  if(-not $selected){return}
+  if(-not $selected.path -or -not(Test-Path ([string]$selected.path))){
+   [Windows.MessageBox]::Show('No application path has been configured. Open ADMIN to set the executable for this tile.','BMW Launcher','OK','Information')|Out-Null;return
+  }
+  try {Start-Process -FilePath ([string]$selected.path) -WorkingDirectory (Split-Path ([string]$selected.path) -Parent)} catch {[Windows.MessageBox]::Show($_.Exception.Message,'Unable to launch')|Out-Null}
+ })
+ return $btn
+}
+function Render-Cards {
+ $tiles.Items.Clear()
+ foreach($app in $script:apps){if($app.enabled -ne $false){$tiles.Items.Add((Make-Card $app))|Out-Null}}
+ if ($window.FindName('EmptyState')) { $window.FindName('EmptyState').Visibility = 'Collapsed' }
+}
+function Admin-Dialog {
+ $x=@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="BMW Launcher Administration" Width="810" Height="610" WindowStartupLocation="CenterOwner" Background="#E8EDF3" Foreground="#172536" FontFamily="Segoe UI" ResizeMode="CanResize">
+<Grid Margin="24"><Grid.RowDefinitions><RowDefinition Height="65"/><RowDefinition Height="*"/><RowDefinition Height="52"/></Grid.RowDefinitions>
+<StackPanel Grid.Row="0"><TextBlock Text="LAUNCHER SETTINGS" FontSize="25" FontWeight="Light"/><TextBlock Text="Choose a tile, edit its details, then Save Changes" Foreground="#34465A" FontSize="12"/></StackPanel>
+<Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+<DockPanel Grid.Column="0"><StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,10,0,0"><Button x:Name="Add" Content="+ ADD" Width="88" Margin="0,0,5,0"/><Button x:Name="Remove" Content="REMOVE" Width="88"/></StackPanel><ListBox x:Name="AppList" Background="#FFFFFF" Foreground="#172536" BorderBrush="#AAB8C8" FontSize="14"/></DockPanel>
+<StackPanel Grid.Column="2" VerticalAlignment="Top">
+<TextBlock Text="DISPLAY NAME" Foreground="#34465A" FontSize="11" Margin="0,0,0,5"/><TextBox x:Name="NameInput" FontSize="15" Padding="10" Margin="0,0,0,15"/>
+<TextBlock Text="APPLICATION PATH" Foreground="#34465A" FontSize="11" Margin="0,0,0,5"/><DockPanel Margin="0,0,0,15"><Button x:Name="BrowseApp" DockPanel.Dock="Right" Width="78" Content="BROWSE"/><TextBox x:Name="PathInput" FontSize="13" Padding="8"/></DockPanel>
+<TextBlock Text="CUSTOM ICON (PNG / JPG / ICO)" Foreground="#34465A" FontSize="11" Margin="0,0,0,5"/><DockPanel Margin="0,0,0,15"><Button x:Name="BrowseIcon" DockPanel.Dock="Right" Width="78" Content="BROWSE"/><TextBox x:Name="IconInput" FontSize="13" Padding="8"/></DockPanel>
+<CheckBox x:Name="EnabledInput" Content="Show tile on the dashboard" Margin="0,0,0,18" IsChecked="True"/>
+<StackPanel Orientation="Horizontal"><Button x:Name="ApplyTile" Content="APPLY TILE CHANGES" Padding="16,8" Margin="0,0,8,0"/><Button x:Name="MoveUp" Content="MOVE UP" Padding="12,8" Margin="0,0,8,0"/><Button x:Name="MoveDown" Content="MOVE DOWN" Padding="12,8"/></StackPanel>
+<TextBlock Text="Tip: Custom icon images look best with a transparent background. Existing saved application paths are preserved." TextWrapping="Wrap" Foreground="#526579" Margin="0,24,0,0"/>
+</StackPanel></Grid>
+<DockPanel Grid.Row="2" LastChildFill="False" VerticalAlignment="Bottom"><TextBlock DockPanel.Dock="Left" Foreground="#526579" VerticalAlignment="Center" Text="Changes apply to this Windows installation only."/><Button x:Name="SaveClose" DockPanel.Dock="Right" Content="SAVE &amp; CLOSE" Padding="22,10"/></DockPanel>
+</Grid></Window>
+'@
+ $dlg=[Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader ([xml]$x)))
+ $dlg.Owner=$window
+ $lst=$dlg.FindName('AppList');$nm=$dlg.FindName('NameInput');$pa=$dlg.FindName('PathInput');$ic=$dlg.FindName('IconInput');$en=$dlg.FindName('EnabledInput')
+ $script:editingApps=New-Object System.Collections.ArrayList
+ foreach($a in $script:apps){[void]$script:editingApps.Add([pscustomobject]@{name=[string]$a.name;path=[string]$a.path;icon=[string]$a.icon;symbol=[string]$a.symbol;enabled=($a.enabled -ne $false)})}
+ function Refresh-List { $idx=$lst.SelectedIndex;$lst.Items.Clear();foreach($a in $script:editingApps){[void]$lst.Items.Add($a.name)};if($lst.Items.Count -gt 0){$lst.SelectedIndex=[Math]::Max(0,[Math]::Min($idx,$lst.Items.Count-1))} }
+ function Apply-Fields { $i=$lst.SelectedIndex;if($i -lt 0){return};$a=$script:editingApps[$i];if([string]::IsNullOrWhiteSpace($nm.Text)){[Windows.MessageBox]::Show('Tile name cannot be empty.')|Out-Null;return};$a.name=$nm.Text.Trim();$a.path=$pa.Text.Trim();$a.icon=$ic.Text.Trim();$a.enabled=($en.IsChecked -eq $true);$lst.Items[$i]=$a.name }
+ $lst.Add_SelectionChanged({$i=$lst.SelectedIndex;if($i -ge 0 -and $i -lt $script:editingApps.Count){$a=$script:editingApps[$i];$nm.Text=$a.name;$pa.Text=$a.path;$ic.Text=$a.icon;$en.IsChecked=$a.enabled}})
+ $dlg.FindName('BrowseApp').Add_Click({$p=File-Pick $pa.Text;if($p){$pa.Text=$p}})
+ $dlg.FindName('BrowseIcon').Add_Click({$p=File-Pick $ic.Text $true;if($p){$ic.Text=$p}})
+ $dlg.FindName('ApplyTile').Add_Click({Apply-Fields})
+ $dlg.FindName('Add').Add_Click({[void]$script:editingApps.Add([pscustomobject]@{name='New App';path='';icon='';symbol='APP';enabled=$true});Refresh-List;$lst.SelectedIndex=$script:editingApps.Count-1})
+ $dlg.FindName('Remove').Add_Click({$i=$lst.SelectedIndex;if($i -ge 0){$script:editingApps.RemoveAt($i);Refresh-List}})
+ $dlg.FindName('MoveUp').Add_Click({$i=$lst.SelectedIndex;if($i -gt 0){$a=$script:editingApps[$i];$script:editingApps.RemoveAt($i);$script:editingApps.Insert($i-1,$a);Refresh-List;$lst.SelectedIndex=$i-1}})
+ $dlg.FindName('MoveDown').Add_Click({$i=$lst.SelectedIndex;if($i -ge 0 -and $i -lt $script:editingApps.Count-1){$a=$script:editingApps[$i];$script:editingApps.RemoveAt($i);$script:editingApps.Insert($i+1,$a);Refresh-List;$lst.SelectedIndex=$i+1}})
+ $dlg.FindName('SaveClose').Add_Click({Apply-Fields;$script:apps=@($script:editingApps.ToArray());Save-Apps;Render-Cards;$dlg.Close()})
+ Refresh-List
+ [void]$dlg.ShowDialog()
+}
+# SYSTEM: light-touch admin utilities; keep the normal desktop hidden.
+$menu=New-Object System.Windows.Controls.ContextMenu
+foreach($entry in @(
+    @{name='Internet (Microsoft Edge)';action='web'},
+    @{name='Control Panel';action='control'},
+    @{name='Windows Settings (try)';action='settings'},
+    @{name='Date and Time';action='datetime'},
+    @{name='Network Connections';action='network'},
+    @{name='Restart';action='restart'}
+)) {
+    $item=New-Object System.Windows.Controls.MenuItem
+    $item.Header=$entry.name
+    $item.Tag=$entry.action
+    $item.Add_Click({
+        param($sender,$eventArgs)
+        try {
+            switch ([string]$sender.Tag) {
+                'web' { Start-Process 'msedge.exe' }
+                'control' { Start-Process 'control.exe' }
+                'settings' {
+                    try { Start-Process 'ms-settings:' -ErrorAction Stop }
+                    catch { Start-Process 'control.exe' }
+                }
+                'datetime' { Start-Process 'control.exe' -ArgumentList 'timedate.cpl' }
+                'network' { Start-Process 'control.exe' -ArgumentList 'ncpa.cpl' }
+                'restart' {
+                    if ([Windows.MessageBox]::Show('Restart BMW Windows now?','Confirm restart','YesNo','Question') -eq 'Yes') { Restart-Computer }
+                }
+            }
+        } catch {
+            [Windows.MessageBox]::Show($_.Exception.Message,'System action failed') | Out-Null
+        }
+    })
+    [void]$menu.Items.Add($item)
+}
+$systemButton.ContextMenu=$menu
+$systemButton.Add_Click({ $menu.PlacementTarget=$systemButton; $menu.IsOpen=$true })
+$adminButton.Add_Click({Admin-Dialog})
+# Desktop shortcut intentionally disabled; switching is handled by the separate dock.
+$window.Add_StateChanged({if($window.WindowState -eq 'Maximized'){Taskbar $true}})
+$window.Add_Closed({Taskbar $false})
+$timer=New-Object Windows.Threading.DispatcherTimer;$timer.Interval=[TimeSpan]::FromSeconds(30);$timer.Add_Tick({$clock.Text=Get-Date -Format 'ddd, MMM d   h:mm tt'});$clock.Text=Get-Date -Format 'ddd, MMM d   h:mm tt';$timer.Start()
+Load-Apps;Apply-Wallpaper;Render-Cards
+Taskbar $true
+try {[void]$window.ShowDialog()}finally{Taskbar $false}

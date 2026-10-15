@@ -1,0 +1,10 @@
+eb08704b3bf14774fdb0af3c7f545e6f6158c37f3653b2a40c3ed54996a0569b  live-builds/BMW-LIVE-BUILD-20261014-201549.zip
+e610033e677fa62037cb0364d393b4fcc20da154bc23d01c9908ef8b3dda63c1  live-builds/Mercedes-LIVE-BUILD-20261014-202042.zip
+0ef9dbd19d0c9c77ba5ab837e155c165652013ce4bed5f64dbeba7785ee6caac  reference-packages/BMW-v1.0.1-beta.5-release.zip
+6b9faa864d1f6d7f6cbdf12a52367b13156f91cddd4c44f31880cd57b2234397  reference-packages/BMW-Stealth-Controls-v1.zip
+1637c155918298895a202239f054e096b7745ebb75d512a2990eb54dfabc9e41  reference-packages/Mercedes-Controls-PreShell-v1.zip
+5fea862501ca1f91696310b2a37edea6160b35c6d37c5f8120e00513f1ec13ae  reference-packages/Mercedes-Controls-PreShell-v2.zip
+20e0f50cb73b72c5d3ebdcfe5302ac0b111916d01d6f9900bd5bc548e3c11cc3  reference-packages/BMW-v1.0.1-beta.5-source.zip
+7cea010401c3a95b671895d8f3525c6ebd101df9d620110ae111b28bcae55bba  reference-packages/Mercedes-Workstation-Source-v2.zip
+43b2ef2b7393cda8b88c7b94b70b84f6f0733094bf4e7064ac0f231b18dbf071  reference-packages/Diagnostic-Workstation-Master-Source-v1.2.zip
+78da88dd7406393a39461ea56cbbeac8a80532b81172a9248f98d5a346a93c29  reference-packages/Diagnostic-Workstation-Master-Setup-v1.2.zip

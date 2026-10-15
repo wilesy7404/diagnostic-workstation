@@ -1,0 +1,147 @@
+{
+    "brand":  "Mercedes",
+    "export_utc":  "2026-10-15T03:20:43.3768193Z",
+    "description":  "Snapshot of installed workstation source, not a reconstructed release",
+    "files":  [
+                  {
+                      "path":  "ApplyUpdate.ps1",
+                      "bytes":  5961,
+                      "sha256":  "feb97dda4f06614b3fa485498f8e3a308331c62d7247abdc7e06e7a386c86054"
+                  },
+                  {
+                      "path":  "branding/bmw.png",
+                      "bytes":  12416,
+                      "sha256":  "945132a86f0ab3023deecb40b1410c613e0ef075ec4da3c7466f357f086f34f8"
+                  },
+                  {
+                      "path":  "branding/ford.png",
+                      "bytes":  16847,
+                      "sha256":  "4e356e6e8c31b32f89e2d69b04f9f35ece9b3c7740f8409dbf7ab98c0775b86c"
+                  },
+                  {
+                      "path":  "branding/gm.png",
+                      "bytes":  9112,
+                      "sha256":  "7c19bce4ff5e455ca8c8bc3c248d464c9cb7e8c746bcebf1e2dcc371d0eb0aa2"
+                  },
+                  {
+                      "path":  "branding/honda.png",
+                      "bytes":  3899,
+                      "sha256":  "347e88f506cf9667ba5cc05c7ba38fc2733451a41ddb8bbf16b6f812614c5e64"
+                  },
+                  {
+                      "path":  "branding/jlr.png",
+                      "bytes":  8374,
+                      "sha256":  "d77384e4583bfd5af0189ff0f740604977d8c534da092edaabbd09cdebfe53d9"
+                  },
+                  {
+                      "path":  "branding/mercedes.png",
+                      "bytes":  233049,
+                      "sha256":  "9692d9bc8fea0731e1d68c4f5596783ff360c6cc2a9f48af4b8bdccec7234bab"
+                  },
+                  {
+                      "path":  "branding/porsche.png",
+                      "bytes":  37350,
+                      "sha256":  "f7e7cb9e5b1f36525bd266ca88dec9a110b229eac8776e42e34877bf1929d34c"
+                  },
+                  {
+                      "path":  "branding/toyota.png",
+                      "bytes":  3592,
+                      "sha256":  "a2bcb6702baf267a2e8cef575fa62ef867a25344f25ca36213227d2551b0f13c"
+                  },
+                  {
+                      "path":  "branding/vw-audi.png",
+                      "bytes":  3900,
+                      "sha256":  "d4cb5f2d3c2a6421f6db7a8065721f50700f8d139fef9ce8d4285f938a4e56eb"
+                  },
+                  {
+                      "path":  "Create-Shortcuts.ps1",
+                      "bytes":  549,
+                      "sha256":  "e30e35f2145164f50de580166cdecf85cd9d850d1d91a832e24293448a4dc594"
+                  },
+                  {
+                      "path":  "Dock.ps1",
+                      "bytes":  18099,
+                      "sha256":  "4daa7c752bc430a800e6950a620b30966a8d02a9e19f9b9b1f12129784106070"
+                  },
+                  {
+                      "path":  "Launcher.ps1",
+                      "bytes":  26847,
+                      "sha256":  "bf49bba838af8a963123871ce1e8ec7b1ebf01d5764bbe5cbb1d88486c3fe61c"
+                  },
+                  {
+                      "path":  "profile.json",
+                      "bytes":  189,
+                      "sha256":  "1ea90de56a079b8cd1a5852a41180de60e899be589bb17b2858a9ff81b6a8b30"
+                  },
+                  {
+                      "path":  "Remove-Legacy-Mercedes.ps1",
+                      "bytes":  2969,
+                      "sha256":  "fb66bea8533cc0e716715e7d05939a530d13305cf67ba51573746a66b3ac96ac"
+                  },
+                  {
+                      "path":  "Restart-Mercedes-Controls.ps1",
+                      "bytes":  1045,
+                      "sha256":  "84ee7bd5f9392779bbd2be5005e0bb936c53a0536c0286f18123c9e5c3a965ae"
+                  },
+                  {
+                      "path":  "Restore-ExplorerShell.ps1",
+                      "bytes":  811,
+                      "sha256":  "cb768f2647e41be26bb92d08bc1e2f8246506d1fa039999d811ba437cdaa32e8"
+                  },
+                  {
+                      "path":  "Save-Approved-Mercedes.ps1",
+                      "bytes":  5150,
+                      "sha256":  "571803fd639a2ec66df7e1fe7f1921ee7ad1e2e688f436d4157b94305e1827dc"
+                  },
+                  {
+                      "path":  "SystemPanel.ps1",
+                      "bytes":  8267,
+                      "sha256":  "17abdc844b0f3bbb3714f0b7bd0fe1fb4cdec8b8cd959b6965ddde8e7705928d"
+                  },
+                  {
+                      "path":  "Uninstall.ps1",
+                      "bytes":  3913,
+                      "sha256":  "71179b60644de4d64b66353036aad1fa6d8cc356d0b579cd3cd21e87985e90bc"
+                  },
+                  {
+                      "path":  "UpdateAgent.ps1",
+                      "bytes":  10556,
+                      "sha256":  "e66fd8901e8d9f30aa66ea4906c0305243a60df403bd12a28eb70b219b48abd8"
+                  },
+                  {
+                      "path":  "UpdateRunner.ps1",
+                      "bytes":  4715,
+                      "sha256":  "ed1603fc093954489342b59cd8d426cf50a28f3e957af93ff271f3ce0bc9cb9f"
+                  },
+                  {
+                      "path":  "Validate.ps1",
+                      "bytes":  761,
+                      "sha256":  "d221e4b89bec34a1ff426e301ffee17cee515d94484a52ba14c7604ecb6785e8"
+                  },
+                  {
+                      "path":  "version.json",
+                      "bytes":  27,
+                      "sha256":  "ad10f63f7553f206f479ad985bce84d5a12d09bae1e8e15acd51ddfa833ae04f"
+                  },
+                  {
+                      "path":  "Watchdog.ps1",
+                      "bytes":  1260,
+                      "sha256":  "7e721f24fc1a3f20844ada2132900da45cf3afeb15ee763e43fa2aa57d057af9"
+                  },
+                  {
+                      "path":  "WorkstationControls.ps1",
+                      "bytes":  22205,
+                      "sha256":  "7a9c4f0f3a31d86d41d20c588119e467b031678febf1ed3f598b2e7b6000bca8"
+                  },
+                  {
+                      "path":  "WorkstationManager.exe",
+                      "bytes":  2478080,
+                      "sha256":  "4981dc756c970e3a9bc4890f79a57cd0a525d525eb0da7ccfe050d3263a9c63f"
+                  },
+                  {
+                      "path":  "WorkstationShell.ps1",
+                      "bytes":  4759,
+                      "sha256":  "92758c6d2b2d77ffc4fc9217f6b3c10c46da59f5ee2f687e9977b08ca1109cb5"
+                  }
+              ]
+}
