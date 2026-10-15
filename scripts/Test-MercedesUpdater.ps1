@@ -166,6 +166,16 @@ Assert-True ($apply -match 'Resume-LauncherAndDock \$homeTitle') 'failure path d
 $resume = [regex]::Match($apply, '(?sm)function Resume-LauncherAndDock.*?^\}')
 Assert-True ($resume.Success -and $resume.Value -match 'Start-WorkstationUi') 'resume does not start the UI directly'
 Assert-True ($agent -match '#0C121C' -and $agent -match '#C0C6CE') 'update dialog is missing the Home colors'
+Assert-True ($agent -match 'AllowsTransparency="True"' -and $agent -match 'CornerRadius="14"' -and $agent -match '#2A3442' -and $agent -match '#1A2230' -and $agent -match '#8A96A6') 'update dialog is missing the Mercedes chrome'
+Assert-True ($agent -match 'Software Update') 'update dialog title is missing'
+Assert-True ($agent -notmatch '#FFFFFF' -and $agent -notmatch 'Brushes\]::White') 'update dialog still uses white'
+$templates = [regex]::Matches($agent, '(?s)<ControlTemplate(\s[^>]*)?>')
+Assert-True ($templates.Count -ge 4) 'update dialog is missing its templates'
+foreach ($template in $templates) {
+  Assert-True ($template.Value -match 'xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"') 'a ControlTemplate is missing xmlns:x'
+}
+Assert-True ((Get-ReleaseSummary "# Hello`r`n`nSecond") -eq 'Hello') 'release summary was not simplified'
+Assert-True ((Get-ReleaseSummary '') -eq '') 'empty release notes were not skipped'
 
 $launcher = Get-Content -LiteralPath (Join-Path $source 'Launcher.ps1') -Raw
 Assert-True ($launcher -match '#C0C6CE' -and $launcher -match '#D0D5DB') 'Launcher silver tweaks are missing'
