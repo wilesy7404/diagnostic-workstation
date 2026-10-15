@@ -238,12 +238,12 @@ Assert-True ($workflow -match 'workflow_dispatch') 'workflow is not manual'
 
 $python = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $python) { throw 'python3 is required to build the bundle' }
-& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.1'
+& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.2'
 if ($LASTEXITCODE -ne 0) { throw 'bundle build failed' }
-$dist = Join-Path $repo 'dist/mercedes-v0.1.3-beta.1'
+$dist = Join-Path $repo 'dist/mercedes-v0.1.3-beta.2'
 $builtManifest = Get-Content -LiteralPath (Join-Path $dist 'update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-Assert-True ($builtManifest.tag -eq 'mercedes-v0.1.3-beta.1') 'bundle tag is wrong'
-Assert-True ($builtManifest.version -eq '0.1.3-beta.1') 'bundle version is wrong'
+Assert-True ($builtManifest.tag -eq 'mercedes-v0.1.3-beta.2') 'bundle tag is wrong'
+Assert-True ($builtManifest.version -eq '0.1.3-beta.2') 'bundle version is wrong'
 Assert-True (@($builtManifest.files).Count -eq 28) 'bundle does not contain 28 files'
 $zipBytes = [System.IO.File]::ReadAllBytes((Join-Path $dist 'workstation.zip'))
 Assert-True ([int64]$zipBytes.Length -eq [int64]$builtManifest.bytes) 'zip size does not match the manifest'
@@ -256,7 +256,7 @@ try {
   [System.IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $dist 'workstation.zip'), $extract)
   $verified = Test-ManifestPackage $extract (Join-Path $dist 'update-manifest.json')
   Assert-RequiredPackageFiles $verified
-  Assert-ManifestIdentity $verified 'mercedes-v0.1.3-beta.1' 'mercedes-v'
+  Assert-ManifestIdentity $verified 'mercedes-v0.1.3-beta.2' 'mercedes-v'
   foreach ($name in @('apps.json','controls-pin.json','update-settings.json')) {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $extract $name))) "$name was packaged"
   }

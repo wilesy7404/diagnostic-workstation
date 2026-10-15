@@ -12,18 +12,21 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "handoff" / "2026-10-14" / "live-source" / "Mercedes"
 LIVE_ZIP = ROOT / "handoff" / "2026-10-14" / "live-builds" / "Mercedes-LIVE-BUILD-20261014-202042.zip"
 BUILD_MANIFEST = SOURCE / "BUILD-MANIFEST.json"
+VERSION = "0.1.3-beta.2"
 CHANGED = {
     "Launcher.ps1",
-    "UpdateAgent.ps1",
     "UpdateRunner.ps1",
-    "ApplyUpdate.ps1",
-    "version.json",
 }
-# PR #3 Dock.ps1 (UTF-8 BOM, System gear Visibility=Collapsed).
-# The Oct 14 BUILD-MANIFEST still records the pre-change export, so the
-# approved hash is frozen here. Dock stays out of CHANGED: any other bytes fail.
+# The Oct 14 BUILD-MANIFEST still records the pre-change export.
+# These hashes are frozen here, and the files stay out of CHANGED.
 APPROVED_HASHES = {
+    # PR #3 Dock.ps1 (UTF-8 BOM, System gear Visibility=Collapsed).
     "Dock.ps1": ("824ab5c00c8f1e482498f1a07e0d19b462c900efbf09bb7dc741a7f09e8b13fc", 18125),
+    # PR #6 restart check, safer rollback, and the updater idle loop.
+    "ApplyUpdate.ps1": ("d75973d02b44881a1a254063d8151b8e67bdbecf4bafe0a780fdd827ba8ad0a8", 15382),
+    "UpdateAgent.ps1": ("cf97590a50d3616a06a603a83efa63e5563153d964111504b91d55c23361e9cc", 28966),
+    # {"version":"0.1.3-beta.2"} with no trailing newline.
+    "version.json": ("238dd5050be51ba592ebb7fddd267933247b525ef3cbad505358cb1b4a833b28", 26),
 }
 XAML_NS = 'xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"'
 EXCLUDED = {
@@ -97,12 +100,17 @@ def read_source(path: str, zip_members: dict, expected: dict) -> bytes:
 
 def assert_current_package(staged: list[tuple[str, bytes]], version: str) -> None:
     files = dict(staged)
-    for path in ("Launcher.ps1", "UpdateAgent.ps1", "version.json", "Dock.ps1"):
+    for path in ("Launcher.ps1", "UpdateAgent.ps1", "ApplyUpdate.ps1", "version.json", "Dock.ps1"):
         if not (SOURCE / path).is_file():
             raise SystemExit(f"{path} must come from the current Mercedes source tree")
     version_text = files["version.json"].decode("utf-8")
     if json.loads(version_text).get("version") != version:
-        raise SystemExit("packaged version.json is not 0.1.3-beta.1")
+        raise SystemExit(f"packaged version.json is not {VERSION}")
+    for path in ("ApplyUpdate.ps1", "UpdateAgent.ps1", "version.json"):
+        want_hash, want_bytes = APPROVED_HASHES[path]
+        data = files[path]
+        if sha256(data) != want_hash or len(data) != want_bytes:
+            raise SystemExit(f"packaged {path} is not the approved 0.1.3-beta.2 file")
     launcher = files["Launcher.ps1"].decode("utf-8-sig")
     if "LAUNCHER SETTINGS" not in launcher or "#C0C6CE" not in launcher or "#D0D5DB" not in launcher:
         raise SystemExit("packaged Launcher.ps1 is not the current main copy")
@@ -117,12 +125,12 @@ def assert_current_package(staged: list[tuple[str, bytes]], version: str) -> Non
 
 
 def main(argv: list[str]) -> int:
-    version = argv[1] if len(argv) > 1 else "0.1.3-beta.1"
-    if version != "0.1.3-beta.1":
-        raise SystemExit("this bundle script is pinned to 0.1.3-beta.1")
+    version = argv[1] if len(argv) > 1 else VERSION
+    if version != VERSION:
+        raise SystemExit(f"this bundle script is pinned to {VERSION}")
     version_bytes = (SOURCE / "version.json").read_bytes()
     if json.loads(version_bytes.decode("utf-8")).get("version") != version:
-        raise SystemExit("version.json does not match 0.1.3-beta.1")
+        raise SystemExit(f"version.json does not match {VERSION}")
     paths, expected = load_members(BUILD_MANIFEST.read_bytes())
     with zipfile.ZipFile(LIVE_ZIP) as archive:
         zip_members = {name.replace("\\", "/"): archive.read(name) for name in archive.namelist()}
