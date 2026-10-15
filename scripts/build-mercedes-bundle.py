@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -18,6 +19,13 @@ CHANGED = {
     "ApplyUpdate.ps1",
     "version.json",
 }
+# PR #3 Dock.ps1 (UTF-8 BOM, System gear Visibility=Collapsed).
+# The Oct 14 BUILD-MANIFEST still records the pre-change export, so the
+# approved hash is frozen here. Dock stays out of CHANGED: any other bytes fail.
+APPROVED_HASHES = {
+    "Dock.ps1": ("824ab5c00c8f1e482498f1a07e0d19b462c900efbf09bb7dc741a7f09e8b13fc", 18125),
+}
+XAML_NS = 'xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"'
 EXCLUDED = {
     "update-settings.json",
     "apps.json",
@@ -59,6 +67,12 @@ def load_members(blob: bytes):
     missing = sorted(required.difference(paths))
     if missing:
         raise SystemExit("approved set is missing: " + ", ".join(missing))
+    for path, frozen in APPROVED_HASHES.items():
+        if path not in expected:
+            raise SystemExit(f"approved hash is not in the manifest: {path}")
+        if path in CHANGED:
+            raise SystemExit(f"{path} cannot be both changed and hash-pinned")
+        expected[path] = frozen
     return paths, expected
 
 
@@ -81,6 +95,27 @@ def read_source(path: str, zip_members: dict, expected: dict) -> bytes:
     return data
 
 
+def assert_current_package(staged: list[tuple[str, bytes]], version: str) -> None:
+    files = dict(staged)
+    for path in ("Launcher.ps1", "UpdateAgent.ps1", "version.json", "Dock.ps1"):
+        if not (SOURCE / path).is_file():
+            raise SystemExit(f"{path} must come from the current Mercedes source tree")
+    version_text = files["version.json"].decode("utf-8")
+    if json.loads(version_text).get("version") != version:
+        raise SystemExit("packaged version.json is not 0.1.3-beta.1")
+    launcher = files["Launcher.ps1"].decode("utf-8-sig")
+    if "LAUNCHER SETTINGS" not in launcher or "#C0C6CE" not in launcher or "#D0D5DB" not in launcher:
+        raise SystemExit("packaged Launcher.ps1 is not the current main copy")
+    agent = files["UpdateAgent.ps1"].decode("utf-8-sig")
+    templates = re.findall(r"<ControlTemplate(?:\s[^>]*)?>", agent)
+    if "Software Update" not in agent or not templates or any(XAML_NS not in item for item in templates):
+        raise SystemExit("packaged UpdateAgent.ps1 is missing the xmlns:x redesign")
+    dock_hash, dock_bytes = APPROVED_HASHES["Dock.ps1"]
+    dock = files["Dock.ps1"]
+    if sha256(dock) != dock_hash or len(dock) != dock_bytes:
+        raise SystemExit("packaged Dock.ps1 is not the approved PR #3 file")
+
+
 def main(argv: list[str]) -> int:
     version = argv[1] if len(argv) > 1 else "0.1.3-beta.1"
     if version != "0.1.3-beta.1":
@@ -95,6 +130,7 @@ def main(argv: list[str]) -> int:
     for path in paths:
         data = read_source(path, zip_members, expected)
         staged.append((path, data))
+    assert_current_package(staged, version)
     out_dir = ROOT / "dist" / f"mercedes-v{version}"
     out_dir.mkdir(parents=True, exist_ok=True)
     zip_path = out_dir / "workstation.zip"
