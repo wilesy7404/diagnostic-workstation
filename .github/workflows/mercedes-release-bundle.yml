@@ -1,0 +1,47 @@
+name: Build Mercedes release bundle
+
+# Manual bundle only. This workflow does not create a release, push a tag, or publish assets.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Mercedes version without the tag prefix'
+        required: true
+        default: '0.1.3-beta.1'
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Mercedes updater scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/pwsh.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.4.12/powershell-7.4.12-linux-x64.tar.gz
+          mkdir -p "$RUNNER_TEMP/pwsh"
+          tar -xzf /tmp/pwsh.tar.gz -C "$RUNNER_TEMP/pwsh"
+          chmod +x "$RUNNER_TEMP/pwsh/pwsh"
+          "$RUNNER_TEMP/pwsh/pwsh" -NoProfile -File scripts/Test-MercedesUpdater.ps1
+      - name: Build workstation.zip and update-manifest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.version }}" = "0.1.3-beta.1"
+          python3 scripts/build-mercedes-bundle.py "${{ inputs.version }}"
+          test -f "dist/mercedes-v${{ inputs.version }}/workstation.zip"
+          test -f "dist/mercedes-v${{ inputs.version }}/update-manifest.json"
+          echo "Bundle is an Actions artifact only. No GitHub Release was created."
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mercedes-v${{ inputs.version }}
+          path: |
+            dist/mercedes-v${{ inputs.version }}/workstation.zip
+            dist/mercedes-v${{ inputs.version }}/update-manifest.json
+          if-no-files-found: error

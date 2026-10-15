@@ -1,77 +1,97 @@
+# Downloads one Mercedes release, checks every file hash, then runs ApplyUpdate.ps1.
+# Windows PowerShell 5.1. No universal tag prefix.
 param(
- [Parameter(Mandatory=$true)][string]$ZipUrl,
- [Parameter(Mandatory=$true)][string]$ManifestUrl,
- [Parameter(Mandatory=$true)][string]$Tag
+  [string]$ZipUrl,
+  [string]$ManifestUrl,
+  [string]$Tag
 )
-$ErrorActionPreference='Stop'
-$root=Split-Path -Parent $MyInvocation.MyCommand.Path
-$status=Join-Path $root 'update-progress.json'
-function Progress([string]$stage,[string]$message,[int]$percent){
- $o=@{state=$stage;message=$message;percent=$percent;checked=(Get-Date).ToString('o')}
- $tmp="$status.$PID.tmp"
- [IO.File]::WriteAllText($tmp,($o|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false)))
- Move-Item -LiteralPath $tmp -Destination $status -Force
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$root = $PSScriptRoot
+$savedLibrary = $env:MERCEDES_UPDATER_LIBRARY
+$env:MERCEDES_UPDATER_LIBRARY = '1'
+. (Join-Path $root 'UpdateAgent.ps1')
+if ([string]::IsNullOrEmpty($savedLibrary)) {
+  Remove-Item Env:\MERCEDES_UPDATER_LIBRARY -ErrorAction SilentlyContinue
+} else {
+  $env:MERCEDES_UPDATER_LIBRARY = $savedLibrary
 }
-try {
- $target='https://github.com/wilesy7404/diagnostic-workstation/releases/download/'
- if(-not $ZipUrl.StartsWith($target,[StringComparison]::OrdinalIgnoreCase) -or -not $ManifestUrl.StartsWith($target,[StringComparison]::OrdinalIgnoreCase)){throw 'Unexpected download URLs'}
- if($Tag -notmatch '^universal-v\d+\.\d+\.\d+(-beta\.\d+)?$'){throw 'Invalid release version'}
- $stage=Join-Path $root ('Pending-'+($Tag -replace '[^0-9a-zA-Z.-]',''))
- [void](New-Item -ItemType Directory -Force -Path $stage)
- $zip=Join-Path $stage 'workstation.zip';$manifestFile=Join-Path $stage 'update-manifest.json'
- Progress downloading 'Downloading update package...' 10
- Invoke-WebRequest -Uri $ZipUrl -OutFile $zip -UseBasicParsing -TimeoutSec 120
- Progress verifying 'Downloading and verifying manifest...' 45
- Invoke-WebRequest -Uri $ManifestUrl -OutFile $manifestFile -UseBasicParsing -TimeoutSec 30
- $manifest=Get-Content -LiteralPath $manifestFile -Raw|ConvertFrom-Json
- if([string]$manifest.version -ne ($Tag -replace '^universal-v','')){throw 'Release manifest version mismatch'}
- if((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$manifest.sha256).ToLowerInvariant()){throw 'Package checksum mismatch'}
- Progress validating 'Extracting and validating scripts...' 60
- $unpack=Join-Path $stage 'package';Expand-Archive -LiteralPath $zip -DestinationPath $unpack -Force
- $expected=@('Launcher.ps1','Dock.ps1','Watchdog.ps1','SystemPanel.ps1')
- foreach($name in $expected){
-  $f=Join-Path (Join-Path $unpack 'core') $name
-  if(-not(Test-Path -LiteralPath $f -PathType Leaf)){throw "Missing $name"}
-  $t=$null;$err=$null
-  [void][Management.Automation.Language.Parser]::ParseFile($f,[ref]$t,[ref]$err)
-  if(@($err).Count){throw "Invalid script $name"}
- }
- $ver=(Get-Content -LiteralPath (Join-Path $unpack 'version.json') -Raw | ConvertFrom-Json).version
- if([string]$ver -ne ($Tag -replace '^universal-v','')){throw 'Package version mismatch'}
- $worker=Join-Path $root 'ApplyUpdate.ps1'
- if(-not(Test-Path $worker)){throw 'Recovery installer missing'}
- Progress installing 'Installing. Workstation Home may restart...' 75
- $ps=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
- $p=Start-Process -FilePath $ps -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+$worker+'" -PackageDirectory "'+$unpack+'"') -WindowStyle Hidden -PassThru
- # WaitForExit waits only for the updater worker, unlike Start-Process -Wait,
- # which can wait on descendants such as the long-running watchdog.
- if(-not $p.WaitForExit(180000)){throw 'Installer did not exit within 3 minutes; check Workstation Home and update status'}
- $p.Refresh()
- # Do not treat a stale 'Update available' status as an installer failure.
- # Validate worker exit code, installed version and the responding Workstation Home window.
- if($p.ExitCode -ne 0){throw ('Update worker exited with code '+$p.ExitCode)}
- $versionPath=Join-Path $root 'version.json'
- $profile=Get-Content -LiteralPath (Join-Path $root 'profile.json') -Raw|ConvertFrom-Json
- $homeTitle=([string]$profile.displayName)+' Diagnostic System'
- $verified=$false
- for($i=0;$i -lt 20;$i++){
-  $installed=''
-  try {$installed=[string](Get-Content -LiteralPath $versionPath -Raw|ConvertFrom-Json).version}catch{}
-  $home=@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
-   Where-Object {$_.CommandLine -match 'DiagnosticWorkstation\\Launcher\.ps1'})
-  foreach($proc in $home){
-   try {
-    $gp=Get-Process -Id $proc.ProcessId -ErrorAction Stop
-    if($installed -eq ($Tag -replace '^universal-v','') -and $gp.MainWindowTitle -eq $homeTitle -and $gp.MainWindowHandle -ne 0 -and $gp.Responding){
-     $verified=$true;break
-    }
-   }catch{}
+
+$status = Join-Path $root 'update-progress.json'
+
+function Write-UpdateProgress([string]$stage, [string]$message, [int]$percent) {
+  $payload = @{ state = $stage; message = $message; percent = $percent; checked = (Get-Date).ToString('o') }
+  $tmp = "$status.$PID.tmp"
+  Write-Utf8File $tmp ($payload | ConvertTo-Json -Compress)
+  Move-Item -LiteralPath $tmp -Destination $status -Force
+}
+
+function Invoke-MercedesUpdate([string]$ZipUrl, [string]$ManifestUrl, [string]$Tag) {
+  if ([string]::IsNullOrWhiteSpace($ZipUrl) -or [string]::IsNullOrWhiteSpace($ManifestUrl) -or [string]::IsNullOrWhiteSpace($Tag)) {
+    throw 'ZipUrl, ManifestUrl, and Tag are required'
   }
-  if($verified){break}
-  Start-Sleep -Seconds 1
- }
- if(-not $verified){throw 'Installer finished but target version and responsive Workstation Home were not both verified'}
- Progress success 'Update installed. Workstation Home verified.' 100
-}catch{
- Progress error ('Update failed: '+$_.Exception.Message) 0
+  $settings = Resolve-MercedesUpdateSettings $root
+  if (-not $settings.mercedesTags) { throw 'Mercedes updates require the mercedes-v prefix' }
+  if ($Tag -notmatch $settings.pattern) { throw 'Invalid release version' }
+  Test-GithubReleaseUrl $ZipUrl $settings.repo $Tag 'workstation.zip'
+  Test-GithubReleaseUrl $ManifestUrl $settings.repo $Tag 'update-manifest.json'
+  $stageName = 'Pending-' + ($Tag -replace '[^0-9A-Za-z.-]', '')
+  $stage = Join-Path $root $stageName
+  [void](New-Item -ItemType Directory -Force -Path $stage)
+  $zip = Join-Path $stage 'workstation.zip'
+  $manifestFile = Join-Path $stage 'update-manifest.json'
+  Write-UpdateProgress 'downloading' 'Downloading update package' 10
+  Invoke-WebRequest -Uri $ZipUrl -OutFile $zip -UseBasicParsing -TimeoutSec 120
+  Write-UpdateProgress 'verifying' 'Checking the manifest' 40
+  Invoke-WebRequest -Uri $ManifestUrl -OutFile $manifestFile -UseBasicParsing -TimeoutSec 30
+  $manifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
+  Assert-ManifestIdentity $manifest $Tag $settings.tagPrefix
+  if ([string]::IsNullOrWhiteSpace([string]$manifest.sha256)) { throw 'Manifest checksum missing' }
+  $zipItem = Get-Item -LiteralPath $zip
+  if ($null -ne $manifest.bytes -and [int64]$zipItem.Length -ne [int64]$manifest.bytes) { throw 'Package size mismatch' }
+  $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($zipHash -ne ([string]$manifest.sha256).ToLowerInvariant()) { throw 'Package checksum mismatch' }
+  Write-UpdateProgress 'verifying' 'Checking every file' 60
+  $unpack = Join-Path $stage 'package'
+  if (Test-Path -LiteralPath $unpack) { Remove-Item -LiteralPath $unpack -Recurse -Force }
+  Expand-Archive -LiteralPath $zip -DestinationPath $unpack -Force
+  $verified = Test-ManifestPackage $unpack $manifestFile
+  Assert-RequiredPackageFiles $verified
+  Assert-ManifestIdentity $verified $Tag $settings.tagPrefix
+  $bare = Get-BareVersion $Tag $settings.tagPrefix
+  $versionPath = Join-RelativePath $unpack 'version.json'
+  $packageVersion = [string](Get-Content -LiteralPath $versionPath -Raw -Encoding UTF8 | ConvertFrom-Json).version
+  if ($packageVersion -ne $bare) { throw 'Package version mismatch' }
+  foreach ($entry in @($verified.files)) {
+    $relative = Get-SafeRelativePath ([string]$entry.path)
+    if ($relative -notlike '*.ps1') { continue }
+    $tokens = $null
+    $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile((Join-RelativePath $unpack $relative), [ref]$tokens, [ref]$errors)
+    if (@($errors).Count -gt 0) { throw "Invalid script $relative" }
+  }
+  $worker = Join-Path $root 'ApplyUpdate.ps1'
+  if (-not (Test-Path -LiteralPath $worker)) { throw 'Recovery installer missing' }
+  Write-UpdateProgress 'installing' 'Installing. Home and the dock may restart.' 75
+  $ps = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $arg = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $worker + '" -PackageDirectory "' + $unpack + '" -ManifestPath "' + $manifestFile + '" -Tag "' + $Tag + '"'
+  $process = Start-Process -FilePath $ps -ArgumentList $arg -WindowStyle Hidden -PassThru
+  if (-not $process.WaitForExit(180000)) { throw 'Installer did not finish within 3 minutes' }
+  $process.Refresh()
+  if ($process.ExitCode -ne 0) { throw 'Update worker failed and restored the previous install' }
+  $installed = ''
+  try { $installed = [string](Get-Content -LiteralPath (Join-Path $root 'version.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version } catch {}
+  if ($installed -ne $bare) { throw 'Installed version does not match the release' }
+  Write-UpdateProgress 'success' 'Update installed. Home and the dock were verified.' 100
+}
+
+if ($env:MERCEDES_UPDATER_LIBRARY -ne '1') {
+  try {
+    Invoke-MercedesUpdate -ZipUrl $ZipUrl -ManifestUrl $ManifestUrl -Tag $Tag
+  } catch {
+    if (Test-OfflineError $_) { Write-UpdateProgress 'error' 'Offline. Nothing was changed.' 0 }
+    else { Write-UpdateProgress 'error' 'Update failed. The previous install was kept.' 0 }
+    exit 1
+  }
 }

@@ -1,0 +1,7 @@
+{
+  "channel": "beta",
+  "source": "public-github-releases",
+  "repo": "wilesy7404/diagnostic-workstation",
+  "brand": "mercedes",
+  "tagPrefix": "mercedes-v"
+}
