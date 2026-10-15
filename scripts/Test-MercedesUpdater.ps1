@@ -143,7 +143,29 @@ try {
   $root = $plainInstall
   Copy-ProfilePreservingApps (Join-RelativePath $plainPackage 'profile.json') (Join-RelativePath $plainInstall 'profile.json')
   Assert-True (([System.IO.File]::ReadAllText((Join-RelativePath $plainInstall 'profile.json'))) -match '#C0C6CE') 'profile without apps was not updated'
+
+  $restoreRoot = Join-Path $tmp 'restore-root'
+  $restoreBackup = Join-Path $tmp 'restore-backup'
+  New-Item -ItemType Directory -Path $restoreRoot, $restoreBackup | Out-Null
+  $savedLog = $log
+  $root = $restoreRoot
+  $log = Join-Path $restoreRoot 'update-install.log'
+  Write-Sample (Join-RelativePath $restoreRoot 'Launcher.ps1') 'LIVE'
+  Write-Sample (Join-RelativePath $restoreRoot 'WorkstationManager.exe') 'SAME'
+  Write-Sample (Join-RelativePath $restoreBackup 'WorkstationManager.exe') 'SAME'
+  Write-Sample (Join-RelativePath $restoreBackup 'Dock.ps1') 'RESTORED'
+  $manager = Join-RelativePath $restoreRoot 'WorkstationManager.exe'
+  $stamp = [datetime]::SpecifyKind([datetime]'2020-01-01T00:00:00', 'Utc')
+  [System.IO.File]::SetLastWriteTimeUtc($manager, $stamp)
+  Write-Utf8File (Join-Path $restoreBackup 'backup-map.txt') "existed`tmissing.ps1`nexisted`tWorkstationManager.exe`nexisted`tDock.ps1`n"
+  $restoreErrors = @(Restore-InstallBackup $restoreBackup)
+  Assert-True ($restoreErrors.Count -ge 1) 'a missing backup file did not report an error'
+  Assert-True (([System.IO.File]::GetLastWriteTimeUtc($manager)).Year -eq 2020) 'matching WorkstationManager.exe was copied'
+  Assert-True (([System.IO.File]::ReadAllText((Join-RelativePath $restoreRoot 'Dock.ps1'))) -eq 'RESTORED') 'restore stopped after the first file error'
+  Assert-True (-not (Test-WindowReady 'Dock' 'Workstation Glass Dock')) 'missing dock process was treated as ready'
+  Get-ProcessWindowTitles $PID | Out-Null
   $root = $savedRoot
+  $log = $savedLog
 
   $bad = [pscustomobject]@{ files = @([pscustomobject]@{ path = 'Launcher.ps1'; bytes = $entries[0].bytes; sha256 = ('0' * 64) }) }
   $badPath = Join-Path $tmp 'bad-manifest.json'
@@ -161,6 +183,14 @@ Assert-True ($runner -notmatch '\^universal-v') 'UpdateRunner still hardcodes a 
 Assert-True ($apply -notmatch '\^universal-v') 'ApplyUpdate still hardcodes a universal tag regex'
 Assert-True ($agent -match 'tagPrefix') 'UpdateAgent does not read tagPrefix'
 Assert-True ($apply -match 'Start-WorkstationUi') 'rollback helper is missing'
+Assert-True ($apply -notmatch 'MainWindowHandle') 'readiness still requires MainWindowHandle'
+Assert-True ($apply -match 'EnumWindows') 'readiness does not enumerate windows by title'
+Assert-True ($apply -match 'Get-WorkstationProcess') 'readiness does not check the script process'
+Assert-True ($apply -match 'A running manager is stopped only when the backup bytes differ') 'restore can overwrite a running manager'
+Assert-True ($apply -match 'Test-SameFileHash') 'restore does not skip identical files'
+Assert-True ($agent -match 'while \(-not \$ownsMutex\)') 'update agent still exits when the mutex is busy'
+Assert-True ($agent -match 'Start-Sleep -Seconds 30') 'update agent does not idle while another copy is running'
+Assert-True ($agent -notmatch 'WaitOne\(0\)\) \{ exit 0 \}') 'update agent exits cleanly when the mutex is busy'
 Assert-True ($apply -match "foreach \(\`$name in @\('Launcher', 'Dock'\)\)") 'rollback does not start both Launcher and Dock'
 Assert-True ($apply -match 'Resume-LauncherAndDock \$homeTitle') 'failure path does not resume both windows'
 $resume = [regex]::Match($apply, '(?sm)function Resume-LauncherAndDock.*?^\}')

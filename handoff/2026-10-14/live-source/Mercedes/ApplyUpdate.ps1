@@ -109,25 +109,61 @@ function Backup-ReplacedFiles([string]$backupRoot, $manifest) {
   Write-BackupMap $backupRoot $records
 }
 
+function Test-SameFileHash([string]$leftPath, [string]$rightPath) {
+  if (-not (Test-Path -LiteralPath $leftPath -PathType Leaf)) { return $false }
+  if (-not (Test-Path -LiteralPath $rightPath -PathType Leaf)) { return $false }
+  $left = Get-FileHash -LiteralPath $leftPath -Algorithm SHA256
+  $right = Get-FileHash -LiteralPath $rightPath -Algorithm SHA256
+  return ($left.Hash -eq $right.Hash)
+}
+
+function Stop-ManagerForExeReplace([string]$relative) {
+  if ([System.IO.Path]::GetFileName($relative) -ne 'WorkstationManager.exe') { return }
+  $running = @(Get-Process -Name 'WorkstationManager' -ErrorAction SilentlyContinue)
+  if ($running.Count -eq 0) { return }
+  # A running manager is stopped only when the backup bytes differ.
+  Stop-WorkstationManager
+  Start-Sleep -Seconds 1
+}
+
 function Restore-InstallBackup([string]$backupRoot) {
   $map = Join-Path $backupRoot 'backup-map.txt'
   if (-not (Test-Path -LiteralPath $map)) { throw 'Backup map missing' }
+  $errors = New-Object System.Collections.ArrayList
   foreach ($line in [System.IO.File]::ReadAllLines($map)) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
-    $tab = $line.IndexOf("`t")
-    if ($tab -lt 1) { throw 'Backup map is unreadable' }
-    $flag = $line.Substring(0, $tab)
-    $relative = Get-SafeRelativePath $line.Substring($tab + 1)
-    if (Test-PreservedRelativePath $relative) { continue }
-    $dest = Join-RelativePath $root $relative
-    if ($flag -eq 'existed') {
-      $parent = Split-Path -Parent $dest
-      if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-      Copy-Item -LiteralPath (Join-RelativePath $backupRoot $relative) -Destination $dest -Force
-    } elseif ($flag -eq 'added') {
-      if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Force }
+    $relative = ''
+    try {
+      $tab = $line.IndexOf("`t")
+      if ($tab -lt 1) { throw 'Backup map is unreadable' }
+      $flag = $line.Substring(0, $tab)
+      $relative = Get-SafeRelativePath $line.Substring($tab + 1)
+      if (Test-PreservedRelativePath $relative) { continue }
+      $dest = Join-RelativePath $root $relative
+      if ($flag -eq 'existed') {
+        $source = Join-RelativePath $backupRoot $relative
+        if (Test-SameFileHash $dest $source) { continue }
+        Stop-ManagerForExeReplace $relative
+        $parent = Split-Path -Parent $dest
+        if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+        Copy-Item -LiteralPath $source -Destination $dest -Force
+      } elseif ($flag -eq 'added') {
+        if (Test-Path -LiteralPath $dest) {
+          Stop-ManagerForExeReplace $relative
+          Remove-Item -LiteralPath $dest -Force
+        }
+      } else {
+        throw "Unknown backup flag $flag"
+      }
+    } catch {
+      $detail = $relative
+      if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $line.Trim() }
+      $message = $detail + ': ' + $_.Exception.Message
+      [void]$errors.Add($message)
+      Write-InstallLog ('Restore error: ' + $message)
     }
   }
+  foreach ($item in $errors) { Write-Output $item }
 }
 
 function Copy-PackageFiles([string]$packageDirectory, $manifest) {
@@ -174,14 +210,63 @@ function Start-SupervisorWhileLocked {
   Start-Process -FilePath $exe -ArgumentList '/supervise' -WorkingDirectory $root -WindowStyle Hidden | Out-Null
 }
 
-function Test-WindowReady([string]$kind, [string]$title) {
-  foreach ($proc in @(Get-WorkstationProcess $kind)) {
-    try {
-      $process = Get-Process -Id $proc.ProcessId -ErrorAction Stop
-      if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.MainWindowTitle -eq $title -and $process.Responding) { return $true }
-    } catch {}
+function Get-ProcessWindowTitles([int]$processId) {
+  # Optional confirmation. Failure leaves readiness on the command-line check.
+  try {
+    if (-not ('MercedesUpdateWindowEnum' -as [type])) {
+      Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class MercedesUpdateWindowEnum {
+  public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern bool EnumWindows(EnumProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern int GetWindowTextLength(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  public static string[] TitlesForProcess(int processId) {
+    List<string> found = new List<string>();
+    uint want = (uint)processId;
+    EnumProc proc = delegate(IntPtr hWnd, IntPtr lParam) {
+      uint windowPid;
+      GetWindowThreadProcessId(hWnd, out windowPid);
+      if (windowPid != want) return true;
+      int len = GetWindowTextLength(hWnd);
+      if (len <= 0) return true;
+      StringBuilder sb = new StringBuilder(len + 1);
+      GetWindowText(hWnd, sb, sb.Capacity);
+      string title = sb.ToString();
+      if (!string.IsNullOrEmpty(title)) found.Add(title);
+      return true;
+    };
+    EnumWindows(proc, IntPtr.Zero);
+    return found.ToArray();
   }
-  return $false
+}
+'@ -ErrorAction Stop
+    }
+    return @([MercedesUpdateWindowEnum]::TitlesForProcess($processId))
+  } catch {
+    return @()
+  }
+}
+
+function Test-WindowReady([string]$kind, [string]$title) {
+  # The dock is a tool window, so the process main-window handle stays 0.
+  # Readiness is the script process. EnumWindows can confirm the title, and a missing title does not fail.
+  $alive = $false
+  foreach ($proc in @(Get-WorkstationProcess $kind)) {
+    $alive = $true
+    foreach ($seen in @(Get-ProcessWindowTitles ([int]$proc.ProcessId))) {
+      if ($seen -eq $title) { return $true }
+    }
+  }
+  return $alive
 }
 
 function Wait-ForLauncherAndDock([int]$seconds, [string]$homeTitle) {
@@ -252,9 +337,14 @@ function Invoke-MercedesApply([string]$PackageDirectory, [string]$ManifestPath, 
         Set-Content -LiteralPath $installMarker -Value (Get-Date).ToString('o') -Encoding ASCII
       }
       Stop-WorkstationUi
-      Restore-InstallBackup $backup
+      $restoreErrors = @(Restore-InstallBackup $backup)
       # Restored files are on disk. Bring Home and the dock back before reporting failure.
       Resume-LauncherAndDock $homeTitle
+      if ($restoreErrors.Count -gt 0) {
+        Write-InstallLog ('Recovery incomplete: ' + ($restoreErrors -join ' | '))
+        Set-InstallStatus 'error' 'Recovery needs attention'
+        exit 1
+      }
       Write-InstallLog 'Rollback complete; Home and dock are responding'
       Set-InstallStatus 'error' 'Update rolled back'
     } catch {

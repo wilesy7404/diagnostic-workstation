@@ -516,7 +516,19 @@ if ($env:MERCEDES_UPDATER_LIBRARY -eq '1') {
     exit 0
   }
   $mutex = New-Object System.Threading.Mutex($false, 'Local\UniversalDiagnosticWorkstation-UpdateAgent-v1')
-  if (-not $mutex.WaitOne(0)) { exit 0 }
+  # Stay running when another agent holds the mutex. A clean exit makes WorkstationManager relaunch this script.
+  $ownsMutex = $false
+  while (-not $ownsMutex) {
+    try {
+      $ownsMutex = [bool]$mutex.WaitOne(0)
+    } catch [System.Threading.AbandonedMutexException] {
+      $ownsMutex = $true
+    } catch {
+      $inner = $_.Exception.InnerException
+      if ($inner -is [System.Threading.AbandonedMutexException]) { $ownsMutex = $true }
+    }
+    if (-not $ownsMutex) { Start-Sleep -Seconds 30 }
+  }
   try {
     Start-Sleep -Seconds 10
     while ($true) {
@@ -562,7 +574,9 @@ if ($env:MERCEDES_UPDATER_LIBRARY -eq '1') {
       Start-Sleep -Seconds 21600
     }
   } finally {
-    $mutex.ReleaseMutex()
+    if ($ownsMutex) {
+      try { $mutex.ReleaseMutex() } catch {}
+    }
     $mutex.Dispose()
   }
 }
