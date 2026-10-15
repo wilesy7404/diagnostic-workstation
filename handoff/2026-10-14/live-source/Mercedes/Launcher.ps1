@@ -286,22 +286,22 @@ function Render-Cards {
 function Admin-Dialog {
  # Centered on Home (Owner + CenterOwner). Not fullscreen. Dark Mercedes chrome, PowerShell 5.1.
  $x=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Workstation Administration" Width="920" Height="760" MinWidth="800" MinHeight="640" WindowStartupLocation="CenterOwner" WindowStyle="None" ResizeMode="CanResize" WindowState="Normal" ShowInTaskbar="True" Background="#0C121C" Foreground="#F4F8FC" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Workstation Administration" Width="690" Height="570" MinWidth="600" MinHeight="480" WindowStartupLocation="CenterOwner" WindowStyle="None" ResizeMode="CanResize" WindowState="Normal" ShowInTaskbar="True" Background="#0C121C" Foreground="#F4F8FC" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
 <Window.Resources>
  <Style x:Key="AdminButton" TargetType="Button">
   <Setter Property="Foreground" Value="#E7F0FA"/>
   <Setter Property="Background" Value="#223246"/>
   <Setter Property="BorderBrush" Value="#5C7390"/>
   <Setter Property="BorderThickness" Value="1"/>
-  <Setter Property="FontSize" Value="13"/>
+  <Setter Property="FontSize" Value="9.75"/>
   <Setter Property="FontWeight" Value="SemiBold"/>
-  <Setter Property="MinHeight" Value="44"/>
-  <Setter Property="Padding" Value="16,8"/>
+  <Setter Property="MinHeight" Value="34"/>
+  <Setter Property="Padding" Value="12,6"/>
   <Setter Property="Cursor" Value="Hand"/>
   <Setter Property="Template">
    <Setter.Value>
     <ControlTemplate TargetType="Button">
-     <Border x:Name="BdAdmin" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+     <Border x:Name="BdAdmin" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7.5" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
       <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
      </Border>
      <ControlTemplate.Triggers>
@@ -318,16 +318,16 @@ function Admin-Dialog {
   <Setter Property="Background" Value="THEME_ACCENT"/>
   <Setter Property="BorderBrush" Value="THEME_ACCENT"/>
   <Setter Property="BorderThickness" Value="1"/>
-  <Setter Property="FontSize" Value="13"/>
+  <Setter Property="FontSize" Value="9.75"/>
   <Setter Property="FontWeight" Value="SemiBold"/>
-  <Setter Property="MinHeight" Value="48"/>
-  <Setter Property="MinWidth" Value="168"/>
-  <Setter Property="Padding" Value="22,10"/>
+  <Setter Property="MinHeight" Value="36"/>
+  <Setter Property="MinWidth" Value="126"/>
+  <Setter Property="Padding" Value="16.5,7.5"/>
   <Setter Property="Cursor" Value="Hand"/>
   <Setter Property="Template">
    <Setter.Value>
     <ControlTemplate TargetType="Button">
-     <Border x:Name="BdPrimary" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="12" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+     <Border x:Name="BdPrimary" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="9" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
       <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
      </Border>
      <ControlTemplate.Triggers>
@@ -340,38 +340,38 @@ function Admin-Dialog {
  </Style>
  <Style x:Key="FieldLabel" TargetType="TextBlock">
   <Setter Property="Foreground" Value="#9BB3C9"/>
-  <Setter Property="FontSize" Value="11"/>
+  <Setter Property="FontSize" Value="8.25"/>
   <Setter Property="FontWeight" Value="SemiBold"/>
-  <Setter Property="Margin" Value="0,0,0,6"/>
+  <Setter Property="Margin" Value="0,0,0,4.5"/>
  </Style>
  <Style TargetType="TextBox">
   <Setter Property="Background" Value="#17273A"/>
   <Setter Property="Foreground" Value="#F4F8FC"/>
   <Setter Property="BorderBrush" Value="#5C7390"/>
   <Setter Property="BorderThickness" Value="1"/>
-  <Setter Property="Padding" Value="12,10"/>
-  <Setter Property="FontSize" Value="15"/>
-  <Setter Property="MinHeight" Value="44"/>
+  <Setter Property="Padding" Value="9,7.5"/>
+  <Setter Property="FontSize" Value="11.25"/>
+  <Setter Property="MinHeight" Value="34"/>
   <Setter Property="CaretBrush" Value="#F4F8FC"/>
   <Setter Property="SelectionBrush" Value="#5C7390"/>
  </Style>
  <Style TargetType="CheckBox">
   <Setter Property="Foreground" Value="#E7F0FA"/>
-  <Setter Property="FontSize" Value="14"/>
-  <Setter Property="MinHeight" Value="36"/>
+  <Setter Property="FontSize" Value="10.5"/>
+  <Setter Property="MinHeight" Value="34"/>
   <Setter Property="Cursor" Value="Hand"/>
  </Style>
  <Style TargetType="ListBoxItem">
   <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-  <Setter Property="Padding" Value="8,6"/>
-  <Setter Property="Margin" Value="2,3"/>
-  <Setter Property="MinHeight" Value="56"/>
+  <Setter Property="Padding" Value="6,4.5"/>
+  <Setter Property="Margin" Value="1.5,2.25"/>
+  <Setter Property="MinHeight" Value="42"/>
   <Setter Property="Cursor" Value="Hand"/>
   <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
   <Setter Property="Template">
    <Setter.Value>
     <ControlTemplate TargetType="ListBoxItem">
-     <Border x:Name="BdItem" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="10" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+     <Border x:Name="BdItem" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="7.5" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
       <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
      </Border>
      <ControlTemplate.Triggers>
@@ -384,59 +384,59 @@ function Admin-Dialog {
  </Style>
 </Window.Resources>
 <Border BorderBrush="#6D8199" BorderThickness="1" Background="#0C121C">
-<Grid Margin="28,22,28,20">
+<Grid Margin="21,16.5,21,15">
  <Grid.RowDefinitions>
   <RowDefinition Height="Auto"/>
   <RowDefinition Height="*"/>
   <RowDefinition Height="Auto"/>
  </Grid.RowDefinitions>
- <Grid Grid.Row="0" Margin="0,0,0,18">
+ <Grid Grid.Row="0" Margin="0,0,0,13.5">
   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
   <StackPanel x:Name="DragHeader" VerticalAlignment="Center">
-   <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-    <Border Width="18" Height="2" Background="THEME_ACCENT" VerticalAlignment="Center" Margin="0,0,10,0"/>
-    <TextBlock Text="UNIVERSAL_BRAND_LABEL" FontSize="11" FontWeight="SemiBold" Foreground="THEME_ACCENT" VerticalAlignment="Center"/>
+   <StackPanel Orientation="Horizontal" Margin="0,0,0,4.5">
+    <Border Width="13.5" Height="1.5" Background="THEME_ACCENT" VerticalAlignment="Center" Margin="0,0,7.5,0"/>
+    <TextBlock Text="UNIVERSAL_BRAND_LABEL" FontSize="8.25" FontWeight="SemiBold" Foreground="THEME_ACCENT" VerticalAlignment="Center"/>
    </StackPanel>
-   <TextBlock Text="LAUNCHER SETTINGS" FontSize="26" FontWeight="Light" Foreground="#F7FBFF"/>
-   <TextBlock Text="Choose a tile, edit its details, then Save Changes" FontSize="13" Foreground="#9BB3C9" Margin="0,4,0,0" TextWrapping="Wrap"/>
+   <TextBlock Text="LAUNCHER SETTINGS" FontSize="19.5" FontWeight="Light" Foreground="#F7FBFF"/>
+   <TextBlock Text="Choose a tile, edit its details, then Save Changes" FontSize="9.75" Foreground="#9BB3C9" Margin="0,3,0,0" TextWrapping="Wrap"/>
   </StackPanel>
-  <Button x:Name="CloseAdmin" Grid.Column="1" Content="&#x2715;" Width="44" Height="44" FontSize="16" VerticalAlignment="Top" Style="{StaticResource AdminButton}" Padding="0" ToolTip="Close"/>
+  <Button x:Name="CloseAdmin" Grid.Column="1" Content="&#x2715;" Width="34" Height="34" FontSize="12" VerticalAlignment="Top" Style="{StaticResource AdminButton}" Padding="0" ToolTip="Close"/>
  </Grid>
  <Grid Grid.Row="1">
-  <Grid.ColumnDefinitions><ColumnDefinition Width="300"/><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+  <Grid.ColumnDefinitions><ColumnDefinition Width="225"/><ColumnDefinition Width="16.5"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
   <DockPanel Grid.Column="0">
-   <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,12,0,0">
-    <Button x:Name="Add" Content="+ ADD" MinWidth="112" Margin="0,0,8,0" Style="{StaticResource AdminButton}"/>
-    <Button x:Name="Remove" Content="REMOVE" MinWidth="112" Style="{StaticResource AdminButton}"/>
+   <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,9,0,0">
+    <Button x:Name="Add" Content="+ ADD" MinWidth="84" Margin="0,0,6,0" Style="{StaticResource AdminButton}"/>
+    <Button x:Name="Remove" Content="REMOVE" MinWidth="84" Style="{StaticResource AdminButton}"/>
    </StackPanel>
-   <Border Background="#101826" BorderBrush="#3E5470" BorderThickness="1" CornerRadius="14" Padding="6">
+   <Border Background="#101826" BorderBrush="#3E5470" BorderThickness="1" CornerRadius="10.5" Padding="4.5">
     <Grid>
-     <ListBox x:Name="AppList" Background="Transparent" Foreground="#F4F8FC" BorderThickness="0" FontSize="15" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
-     <TextBlock x:Name="ListEmpty" Text="No tiles yet. Use + ADD to create one." TextWrapping="Wrap" TextAlignment="Center" Foreground="#8AA4BE" FontSize="13" Margin="16" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False"/>
+     <ListBox x:Name="AppList" Background="Transparent" Foreground="#F4F8FC" BorderThickness="0" FontSize="11.25" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+     <TextBlock x:Name="ListEmpty" Text="No tiles yet. Use + ADD to create one." TextWrapping="Wrap" TextAlignment="Center" Foreground="#8AA4BE" FontSize="9.75" Margin="12" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False"/>
     </Grid>
    </Border>
   </DockPanel>
   <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
    <StackPanel>
-    <TextBlock Text="DISPLAY NAME" Style="{StaticResource FieldLabel}"/><TextBox x:Name="NameInput" Margin="0,0,0,14"/>
+    <TextBlock Text="DISPLAY NAME" Style="{StaticResource FieldLabel}"/><TextBox x:Name="NameInput" Margin="0,0,0,10.5"/>
     <TextBlock Text="APPLICATION PATH" Style="{StaticResource FieldLabel}"/>
-    <DockPanel Margin="0,0,0,14" LastChildFill="True"><Button x:Name="BrowseApp" DockPanel.Dock="Right" Width="108" Margin="8,0,0,0" Content="BROWSE" Style="{StaticResource AdminButton}"/><TextBox x:Name="PathInput"/></DockPanel>
+    <DockPanel Margin="0,0,0,10.5" LastChildFill="True"><Button x:Name="BrowseApp" DockPanel.Dock="Right" Width="81" Margin="6,0,0,0" Content="BROWSE" Style="{StaticResource AdminButton}"/><TextBox x:Name="PathInput"/></DockPanel>
     <TextBlock Text="CUSTOM ICON (PNG / JPG / ICO)" Style="{StaticResource FieldLabel}"/>
-    <DockPanel Margin="0,0,0,14" LastChildFill="True"><Button x:Name="BrowseIcon" DockPanel.Dock="Right" Width="108" Margin="8,0,0,0" Content="BROWSE" Style="{StaticResource AdminButton}"/><TextBox x:Name="IconInput"/></DockPanel>
-    <TextBlock Text="DESCRIPTION (OPTIONAL)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="DescriptionInput" Margin="0,0,0,12" MaxLength="150"/>
-    <CheckBox x:Name="ShowDescriptionInput" Content="Show description under app name" Margin="0,0,0,8" IsChecked="True"/>
-    <CheckBox x:Name="EnabledInput" Content="Show tile on the dashboard" Margin="0,0,0,16" IsChecked="True"/>
+    <DockPanel Margin="0,0,0,10.5" LastChildFill="True"><Button x:Name="BrowseIcon" DockPanel.Dock="Right" Width="81" Margin="6,0,0,0" Content="BROWSE" Style="{StaticResource AdminButton}"/><TextBox x:Name="IconInput"/></DockPanel>
+    <TextBlock Text="DESCRIPTION (OPTIONAL)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="DescriptionInput" Margin="0,0,0,9" MaxLength="150"/>
+    <CheckBox x:Name="ShowDescriptionInput" Content="Show description under app name" Margin="0,0,0,6" IsChecked="True"/>
+    <CheckBox x:Name="EnabledInput" Content="Show tile on the dashboard" Margin="0,0,0,12" IsChecked="True"/>
     <WrapPanel Orientation="Horizontal">
-     <Button x:Name="ApplyTile" Content="APPLY TILE CHANGES" Margin="0,0,8,8" Style="{StaticResource AdminButton}"/>
-     <Button x:Name="MoveUp" Content="MOVE UP" Margin="0,0,8,8" Style="{StaticResource AdminButton}"/>
-     <Button x:Name="MoveDown" Content="MOVE DOWN" Margin="0,0,8,8" Style="{StaticResource AdminButton}"/>
+     <Button x:Name="ApplyTile" Content="APPLY TILE CHANGES" Margin="0,0,6,6" Style="{StaticResource AdminButton}"/>
+     <Button x:Name="MoveUp" Content="MOVE UP" Margin="0,0,6,6" Style="{StaticResource AdminButton}"/>
+     <Button x:Name="MoveDown" Content="MOVE DOWN" Margin="0,0,6,6" Style="{StaticResource AdminButton}"/>
     </WrapPanel>
-    <TextBlock Text="Tip: Custom icon images look best with a transparent background. Existing saved application paths are preserved." TextWrapping="Wrap" Foreground="#8AA4BE" FontSize="12" Margin="0,8,0,0"/>
+    <TextBlock Text="Tip: Custom icon images look best with a transparent background. Existing saved application paths are preserved." TextWrapping="Wrap" Foreground="#8AA4BE" FontSize="9" Margin="0,6,0,0"/>
    </StackPanel>
   </ScrollViewer>
  </Grid>
- <DockPanel Grid.Row="2" LastChildFill="False" Margin="0,16,0,0">
-  <TextBlock DockPanel.Dock="Left" Foreground="#8AA4BE" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="520" Text="Changes apply to this Windows installation only."/>
+ <DockPanel Grid.Row="2" LastChildFill="False" Margin="0,12,0,0">
+  <TextBlock DockPanel.Dock="Left" Foreground="#8AA4BE" FontSize="9" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="390" Text="Changes apply to this Windows installation only."/>
   <Button x:Name="SaveClose" DockPanel.Dock="Right" Content="SAVE &amp; CLOSE" Style="{StaticResource AdminPrimary}"/>
  </DockPanel>
 </Grid>
@@ -454,16 +454,16 @@ function Admin-Dialog {
  foreach($a in $script:apps){[void]$script:editingApps.Add([pscustomobject]@{name=[string]$a.name;path=[string]$a.path;icon=[string]$a.icon;symbol=[string]$a.symbol;enabled=($a.enabled -ne $false);description=[string]$a.description;showDescription=($a.showDescription -ne $false)})}
  function New-TileRow($app) {
   $row=New-Object System.Windows.Controls.Grid
-  $row.MinHeight=44
+  $row.MinHeight=34
   $c0=New-Object System.Windows.Controls.ColumnDefinition
-  $c0.Width=New-Object System.Windows.GridLength(46)
+  $c0.Width=New-Object System.Windows.GridLength(34.5)
   $c1=New-Object System.Windows.Controls.ColumnDefinition
   $c1.Width=New-Object System.Windows.GridLength(1,[System.Windows.GridUnitType]::Star)
   [void]$row.ColumnDefinitions.Add($c0)
   [void]$row.ColumnDefinitions.Add($c1)
   $badge=New-Object System.Windows.Controls.Border
-  $badge.Width=36;$badge.Height=36
-  $badge.CornerRadius=New-Object System.Windows.CornerRadius(10)
+  $badge.Width=27;$badge.Height=27
+  $badge.CornerRadius=New-Object System.Windows.CornerRadius(7.5)
   $badge.Background=Brush '#1B3048'
   $badge.BorderBrush=Brush '#5C7390'
   $badge.BorderThickness=New-Object System.Windows.Thickness(1)
@@ -472,7 +472,7 @@ function Admin-Dialog {
   try { $icon=Image-Source ([string]$app.icon); if(-not $icon){$icon=Image-Source ([string]$app.path)} } catch { $icon=$null }
   if($icon){
    $img=New-Object System.Windows.Controls.Image
-   $img.Source=$icon;$img.Width=26;$img.Height=26;$img.Stretch='Uniform'
+   $img.Source=$icon;$img.Width=19.5;$img.Height=19.5;$img.Stretch='Uniform'
    [Windows.Media.RenderOptions]::SetBitmapScalingMode($img,[Windows.Media.BitmapScalingMode]::HighQuality)
    $img.HorizontalAlignment='Center';$img.VerticalAlignment='Center'
    $badge.Child=$img
@@ -481,21 +481,21 @@ function Admin-Dialog {
    $rawName=[string]$app.name
    if(-not [string]::IsNullOrWhiteSpace($rawName)){ $letters=$rawName.Substring(0,[Math]::Min(2,$rawName.Length)).ToUpperInvariant() }
    $glyph=New-Object System.Windows.Controls.TextBlock
-   $glyph.Text=$letters;$glyph.Foreground=Brush '#E7F1FB';$glyph.FontWeight='SemiBold';$glyph.FontSize=12
+   $glyph.Text=$letters;$glyph.Foreground=Brush '#E7F1FB';$glyph.FontWeight='SemiBold';$glyph.FontSize=9
    $glyph.HorizontalAlignment='Center';$glyph.VerticalAlignment='Center'
    $badge.Child=$glyph
   }
   [void]$row.Children.Add($badge)
   $stack=New-Object System.Windows.Controls.StackPanel
-  $stack.VerticalAlignment='Center';$stack.Margin='10,0,8,0'
+  $stack.VerticalAlignment='Center';$stack.Margin='7.5,0,6,0'
   $title=New-Object System.Windows.Controls.TextBlock
-  $title.Text=[string]$app.name;$title.Foreground=Brush '#F4F8FC';$title.FontSize=15;$title.FontWeight='SemiBold';$title.TextTrimming='CharacterEllipsis'
+  $title.Text=[string]$app.name;$title.Foreground=Brush '#F4F8FC';$title.FontSize=11.25;$title.FontWeight='SemiBold';$title.TextTrimming='CharacterEllipsis'
   [void]$stack.Children.Add($title)
   $rawPath=[string]$app.path
   if(-not [string]::IsNullOrWhiteSpace($rawPath)){
    $sub=New-Object System.Windows.Controls.TextBlock
    try { $sub.Text=[IO.Path]::GetFileName($rawPath) } catch { $sub.Text=$rawPath }
-   $sub.Foreground=Brush '#8AA4BE';$sub.FontSize=11;$sub.Margin='0,2,0,0';$sub.TextTrimming='CharacterEllipsis'
+   $sub.Foreground=Brush '#8AA4BE';$sub.FontSize=8.25;$sub.Margin='0,1.5,0,0';$sub.TextTrimming='CharacterEllipsis'
    [void]$stack.Children.Add($sub)
   }
   [System.Windows.Controls.Grid]::SetColumn($stack,1)
