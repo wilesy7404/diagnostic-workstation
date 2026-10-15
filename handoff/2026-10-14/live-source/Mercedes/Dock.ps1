@@ -1,4 +1,4 @@
-$profile=Get-Content -LiteralPath (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'profile.json') -Raw -Encoding UTF8|ConvertFrom-Json
+﻿$profile=Get-Content -LiteralPath (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'profile.json') -Raw -Encoding UTF8|ConvertFrom-Json
 $script:homeTitle=([string]$profile.displayName)+' Diagnostic System'
 $script:brandShort=[string]$profile.short
 $script:accent=if($profile.accent){[string]$profile.accent}else{'#45ADFF'}
@@ -67,7 +67,7 @@ $xml = @'
    <Button x:Name="WcBatteryButton" Style="{StaticResource DockButton}" ToolTip="Battery percentage">
      <TextBlock x:Name="WcBatteryPercent" Text="--" FontFamily="Segoe UI" FontSize="11" FontWeight="SemiBold" Foreground="#F2F6FC" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" SnapsToDevicePixels="True" />
     </Button>
-    <Button x:Name="System" Style="{StaticResource DockButton}" ToolTip="System controls">
+    <Button x:Name="System" Style="{StaticResource DockButton}" ToolTip="System controls" Visibility="Collapsed">
     <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="19" Foreground="#DDEAF9"/>
    </Button>
   </StackPanel>

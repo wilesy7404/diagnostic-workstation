@@ -1,4 +1,4 @@
-# Universal Diagnostic Launcher v2 | Windows PowerShell 5.1 | WPF
+﻿# Universal Diagnostic Launcher v2 | Windows PowerShell 5.1 | WPF
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Windows.Forms,System.Drawing
 Add-Type @'
@@ -284,32 +284,241 @@ function Render-Cards {
  if ($window.FindName('EmptyState')) { $window.FindName('EmptyState').Visibility = 'Collapsed' }
 }
 function Admin-Dialog {
+ # Centered on Home (Owner + CenterOwner). Not fullscreen. Dark Mercedes chrome, PowerShell 5.1.
  $x=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Workstation Administration" Width="830" Height="710" WindowStartupLocation="CenterOwner" Background="#E8EDF3" Foreground="#172536" FontFamily="Segoe UI" ResizeMode="CanResize">
-<Grid Margin="24"><Grid.RowDefinitions><RowDefinition Height="65"/><RowDefinition Height="*"/><RowDefinition Height="52"/></Grid.RowDefinitions>
-<StackPanel Grid.Row="0"><TextBlock Text="LAUNCHER SETTINGS" FontSize="25" FontWeight="Light"/><TextBlock Text="Choose a tile, edit its details, then Save Changes" Foreground="#34465A" FontSize="12"/></StackPanel>
-<Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-<DockPanel Grid.Column="0"><StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,10,0,0"><Button x:Name="Add" Content="+ ADD" Width="88" Margin="0,0,5,0"/><Button x:Name="Remove" Content="REMOVE" Width="88"/></StackPanel><ListBox x:Name="AppList" Background="#FFFFFF" Foreground="#172536" BorderBrush="#AAB8C8" FontSize="14"/></DockPanel>
-<StackPanel Grid.Column="2" VerticalAlignment="Top">
-<TextBlock Text="DISPLAY NAME" Foreground="#34465A" FontSize="11" Margin="0,0,0,5"/><TextBox x:Name="NameInput" FontSize="15" Padding="10" Margin="0,0,0,15"/>
-<TextBlock Text="APPLICATION PATH" Foreground="#34465A" FontSize="11" Margin="0,0,0,5"/><DockPanel Margin="0,0,0,15"><Button x:Name="BrowseApp" DockPanel.Dock="Right" Width="78" Content="BROWSE"/><TextBox x:Name="PathInput" FontSize="13" Padding="8"/></DockPanel>
-<TextBlock Text="CUSTOM ICON (PNG / JPG / ICO)" Foreground="#34465A" FontSize="11" Margin="0,0,0,5"/><DockPanel Margin="0,0,0,15"><Button x:Name="BrowseIcon" DockPanel.Dock="Right" Width="78" Content="BROWSE"/><TextBox x:Name="IconInput" FontSize="13" Padding="8"/></DockPanel>
-<TextBlock Text="DESCRIPTION (OPTIONAL)" Foreground="#34465A" FontSize="11" Margin="0,0,0,5"/><TextBox x:Name="DescriptionInput" FontSize="13" Padding="8" Margin="0,0,0,8" MaxLength="150"/>
-<CheckBox x:Name="ShowDescriptionInput" Content="Show description under app name" Margin="0,0,0,10" IsChecked="True"/>
-<CheckBox x:Name="EnabledInput" Content="Show tile on the dashboard" Margin="0,0,0,14" IsChecked="True"/>
-<StackPanel Orientation="Horizontal"><Button x:Name="ApplyTile" Content="APPLY TILE CHANGES" Padding="16,8" Margin="0,0,8,0"/><Button x:Name="MoveUp" Content="MOVE UP" Padding="12,8" Margin="0,0,8,0"/><Button x:Name="MoveDown" Content="MOVE DOWN" Padding="12,8"/></StackPanel>
-<TextBlock Text="Tip: Custom icon images look best with a transparent background. Existing saved application paths are preserved." TextWrapping="Wrap" Foreground="#526579" Margin="0,24,0,0"/>
-</StackPanel></Grid>
-<DockPanel Grid.Row="2" LastChildFill="False" VerticalAlignment="Bottom"><TextBlock DockPanel.Dock="Left" Foreground="#526579" VerticalAlignment="Center" Text="Changes apply to this Windows installation only."/><Button x:Name="SaveClose" DockPanel.Dock="Right" Content="SAVE &amp; CLOSE" Padding="22,10"/></DockPanel>
-</Grid></Window>
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Workstation Administration" Width="690" Height="570" MinWidth="600" MinHeight="480" WindowStartupLocation="CenterOwner" WindowStyle="None" ResizeMode="CanResize" WindowState="Normal" ShowInTaskbar="True" Background="#0C121C" Foreground="#F4F8FC" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
+<Window.Resources>
+ <Style x:Key="AdminButton" TargetType="Button">
+  <Setter Property="Foreground" Value="#E7F0FA"/>
+  <Setter Property="Background" Value="#223246"/>
+  <Setter Property="BorderBrush" Value="#5C7390"/>
+  <Setter Property="BorderThickness" Value="1"/>
+  <Setter Property="FontSize" Value="9.75"/>
+  <Setter Property="FontWeight" Value="SemiBold"/>
+  <Setter Property="MinHeight" Value="34"/>
+  <Setter Property="Padding" Value="12,6"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+   <Setter.Value>
+    <ControlTemplate TargetType="Button">
+     <Border x:Name="BdAdmin" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7.5" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+     </Border>
+     <ControlTemplate.Triggers>
+      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="BdAdmin" Property="Background" Value="#314862"/></Trigger>
+      <Trigger Property="IsPressed" Value="True"><Setter TargetName="BdAdmin" Property="Background" Value="#3E5A78"/></Trigger>
+      <Trigger Property="IsEnabled" Value="False"><Setter TargetName="BdAdmin" Property="Opacity" Value="0.45"/></Trigger>
+     </ControlTemplate.Triggers>
+    </ControlTemplate>
+   </Setter.Value>
+  </Setter>
+ </Style>
+ <Style x:Key="AdminPrimary" TargetType="Button">
+  <Setter Property="Foreground" Value="#0D1623"/>
+  <Setter Property="Background" Value="THEME_ACCENT"/>
+  <Setter Property="BorderBrush" Value="THEME_ACCENT"/>
+  <Setter Property="BorderThickness" Value="1"/>
+  <Setter Property="FontSize" Value="9.75"/>
+  <Setter Property="FontWeight" Value="SemiBold"/>
+  <Setter Property="MinHeight" Value="36"/>
+  <Setter Property="MinWidth" Value="126"/>
+  <Setter Property="Padding" Value="16.5,7.5"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template">
+   <Setter.Value>
+    <ControlTemplate TargetType="Button">
+     <Border x:Name="BdPrimary" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="9" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+     </Border>
+     <ControlTemplate.Triggers>
+      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="BdPrimary" Property="Background" Value="#FFFFFF"/></Trigger>
+      <Trigger Property="IsPressed" Value="True"><Setter TargetName="BdPrimary" Property="Background" Value="THEME_ACCENT_SOFT"/></Trigger>
+     </ControlTemplate.Triggers>
+    </ControlTemplate>
+   </Setter.Value>
+  </Setter>
+ </Style>
+ <Style x:Key="FieldLabel" TargetType="TextBlock">
+  <Setter Property="Foreground" Value="#9BB3C9"/>
+  <Setter Property="FontSize" Value="8.25"/>
+  <Setter Property="FontWeight" Value="SemiBold"/>
+  <Setter Property="Margin" Value="0,0,0,4.5"/>
+ </Style>
+ <Style TargetType="TextBox">
+  <Setter Property="Background" Value="#17273A"/>
+  <Setter Property="Foreground" Value="#F4F8FC"/>
+  <Setter Property="BorderBrush" Value="#5C7390"/>
+  <Setter Property="BorderThickness" Value="1"/>
+  <Setter Property="Padding" Value="9,7.5"/>
+  <Setter Property="FontSize" Value="11.25"/>
+  <Setter Property="MinHeight" Value="34"/>
+  <Setter Property="CaretBrush" Value="#F4F8FC"/>
+  <Setter Property="SelectionBrush" Value="#5C7390"/>
+ </Style>
+ <Style TargetType="CheckBox">
+  <Setter Property="Foreground" Value="#E7F0FA"/>
+  <Setter Property="FontSize" Value="10.5"/>
+  <Setter Property="MinHeight" Value="34"/>
+  <Setter Property="Cursor" Value="Hand"/>
+ </Style>
+ <Style TargetType="ListBoxItem">
+  <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+  <Setter Property="Padding" Value="6,4.5"/>
+  <Setter Property="Margin" Value="1.5,2.25"/>
+  <Setter Property="MinHeight" Value="42"/>
+  <Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+  <Setter Property="Template">
+   <Setter.Value>
+    <ControlTemplate TargetType="ListBoxItem">
+     <Border x:Name="BdItem" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="7.5" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+      <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+     </Border>
+     <ControlTemplate.Triggers>
+      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="BdItem" Property="Background" Value="#1C2C3E"/></Trigger>
+      <Trigger Property="IsSelected" Value="True"><Setter TargetName="BdItem" Property="Background" Value="#243246"/><Setter TargetName="BdItem" Property="BorderBrush" Value="THEME_ACCENT"/></Trigger>
+     </ControlTemplate.Triggers>
+    </ControlTemplate>
+   </Setter.Value>
+  </Setter>
+ </Style>
+</Window.Resources>
+<Border BorderBrush="#6D8199" BorderThickness="1" Background="#0C121C">
+<Grid Margin="21,16.5,21,15">
+ <Grid.RowDefinitions>
+  <RowDefinition Height="Auto"/>
+  <RowDefinition Height="*"/>
+  <RowDefinition Height="Auto"/>
+ </Grid.RowDefinitions>
+ <Grid Grid.Row="0" Margin="0,0,0,13.5">
+  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+  <StackPanel x:Name="DragHeader" VerticalAlignment="Center">
+   <StackPanel Orientation="Horizontal" Margin="0,0,0,4.5">
+    <Border Width="13.5" Height="1.5" Background="THEME_ACCENT" VerticalAlignment="Center" Margin="0,0,7.5,0"/>
+    <TextBlock Text="UNIVERSAL_BRAND_LABEL" FontSize="8.25" FontWeight="SemiBold" Foreground="THEME_ACCENT" VerticalAlignment="Center"/>
+   </StackPanel>
+   <TextBlock Text="LAUNCHER SETTINGS" FontSize="19.5" FontWeight="Light" Foreground="#F7FBFF"/>
+   <TextBlock Text="Choose a tile, edit its details, then Save Changes" FontSize="9.75" Foreground="#9BB3C9" Margin="0,3,0,0" TextWrapping="Wrap"/>
+  </StackPanel>
+  <Button x:Name="CloseAdmin" Grid.Column="1" Content="&#x2715;" Width="34" Height="34" FontSize="12" VerticalAlignment="Top" Style="{StaticResource AdminButton}" Padding="0" ToolTip="Close"/>
+ </Grid>
+ <Grid Grid.Row="1">
+  <Grid.ColumnDefinitions><ColumnDefinition Width="225"/><ColumnDefinition Width="16.5"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+  <DockPanel Grid.Column="0">
+   <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,9,0,0">
+    <Button x:Name="Add" Content="+ ADD" MinWidth="84" Margin="0,0,6,0" Style="{StaticResource AdminButton}"/>
+    <Button x:Name="Remove" Content="REMOVE" MinWidth="84" Style="{StaticResource AdminButton}"/>
+   </StackPanel>
+   <Border Background="#101826" BorderBrush="#3E5470" BorderThickness="1" CornerRadius="10.5" Padding="4.5">
+    <Grid>
+     <ListBox x:Name="AppList" Background="Transparent" Foreground="#F4F8FC" BorderThickness="0" FontSize="11.25" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+     <TextBlock x:Name="ListEmpty" Text="No tiles yet. Use + ADD to create one." TextWrapping="Wrap" TextAlignment="Center" Foreground="#8AA4BE" FontSize="9.75" Margin="12" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False"/>
+    </Grid>
+   </Border>
+  </DockPanel>
+  <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+   <StackPanel>
+    <TextBlock Text="DISPLAY NAME" Style="{StaticResource FieldLabel}"/><TextBox x:Name="NameInput" Margin="0,0,0,10.5"/>
+    <TextBlock Text="APPLICATION PATH" Style="{StaticResource FieldLabel}"/>
+    <DockPanel Margin="0,0,0,10.5" LastChildFill="True"><Button x:Name="BrowseApp" DockPanel.Dock="Right" Width="81" Margin="6,0,0,0" Content="BROWSE" Style="{StaticResource AdminButton}"/><TextBox x:Name="PathInput"/></DockPanel>
+    <TextBlock Text="CUSTOM ICON (PNG / JPG / ICO)" Style="{StaticResource FieldLabel}"/>
+    <DockPanel Margin="0,0,0,10.5" LastChildFill="True"><Button x:Name="BrowseIcon" DockPanel.Dock="Right" Width="81" Margin="6,0,0,0" Content="BROWSE" Style="{StaticResource AdminButton}"/><TextBox x:Name="IconInput"/></DockPanel>
+    <TextBlock Text="DESCRIPTION (OPTIONAL)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="DescriptionInput" Margin="0,0,0,9" MaxLength="150"/>
+    <CheckBox x:Name="ShowDescriptionInput" Content="Show description under app name" Margin="0,0,0,6" IsChecked="True"/>
+    <CheckBox x:Name="EnabledInput" Content="Show tile on the dashboard" Margin="0,0,0,12" IsChecked="True"/>
+    <WrapPanel Orientation="Horizontal">
+     <Button x:Name="ApplyTile" Content="APPLY TILE CHANGES" Margin="0,0,6,6" Style="{StaticResource AdminButton}"/>
+     <Button x:Name="MoveUp" Content="MOVE UP" Margin="0,0,6,6" Style="{StaticResource AdminButton}"/>
+     <Button x:Name="MoveDown" Content="MOVE DOWN" Margin="0,0,6,6" Style="{StaticResource AdminButton}"/>
+    </WrapPanel>
+    <TextBlock Text="Tip: Custom icon images look best with a transparent background. Existing saved application paths are preserved." TextWrapping="Wrap" Foreground="#8AA4BE" FontSize="9" Margin="0,6,0,0"/>
+   </StackPanel>
+  </ScrollViewer>
+ </Grid>
+ <DockPanel Grid.Row="2" LastChildFill="False" Margin="0,12,0,0">
+  <TextBlock DockPanel.Dock="Left" Foreground="#8AA4BE" FontSize="9" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="390" Text="Changes apply to this Windows installation only."/>
+  <Button x:Name="SaveClose" DockPanel.Dock="Right" Content="SAVE &amp; CLOSE" Style="{StaticResource AdminPrimary}"/>
+ </DockPanel>
+</Grid>
+</Border>
+</Window>
 '@
+ $x=$x.Replace('THEME_ACCENT_SOFT',$accentSoft).Replace('THEME_ACCENT',$accent)
+ $x=$x.Replace('UNIVERSAL_BRAND_LABEL',[Security.SecurityElement]::Escape([string]$script:brandName.ToUpperInvariant()))
  $dlg=[Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader ([xml]$x)))
  $dlg.Owner=$window
+ $dlg.FindName('DragHeader').Add_MouseLeftButtonDown({ param($sender,$evt) if($evt.ButtonState -eq 'Pressed'){ $dlg.DragMove() } }.GetNewClosure())
+ $dlg.FindName('CloseAdmin').Add_Click({ $dlg.Close() }.GetNewClosure())
  $lst=$dlg.FindName('AppList');$nm=$dlg.FindName('NameInput');$pa=$dlg.FindName('PathInput');$ic=$dlg.FindName('IconInput');$en=$dlg.FindName('EnabledInput');$ds=$dlg.FindName('DescriptionInput');$sd=$dlg.FindName('ShowDescriptionInput')
  $script:editingApps=New-Object System.Collections.ArrayList
  foreach($a in $script:apps){[void]$script:editingApps.Add([pscustomobject]@{name=[string]$a.name;path=[string]$a.path;icon=[string]$a.icon;symbol=[string]$a.symbol;enabled=($a.enabled -ne $false);description=[string]$a.description;showDescription=($a.showDescription -ne $false)})}
- function Refresh-List { $idx=$lst.SelectedIndex;$lst.Items.Clear();foreach($a in $script:editingApps){[void]$lst.Items.Add($a.name)};if($lst.Items.Count -gt 0){$lst.SelectedIndex=[Math]::Max(0,[Math]::Min($idx,$lst.Items.Count-1))} }
- function Apply-Fields { $i=$lst.SelectedIndex;if($i -lt 0){return};$a=$script:editingApps[$i];if([string]::IsNullOrWhiteSpace($nm.Text)){[Windows.MessageBox]::Show('Tile name cannot be empty.')|Out-Null;return};$a.name=$nm.Text.Trim();$a.path=$pa.Text.Trim();$a.icon=$ic.Text.Trim();$a.enabled=($en.IsChecked -eq $true);$a.description=$ds.Text.Trim();$a.showDescription=($sd.IsChecked -eq $true);$lst.Items[$i]=$a.name }
+ function New-TileRow($app) {
+  $row=New-Object System.Windows.Controls.Grid
+  $row.MinHeight=34
+  $c0=New-Object System.Windows.Controls.ColumnDefinition
+  $c0.Width=New-Object System.Windows.GridLength(34.5)
+  $c1=New-Object System.Windows.Controls.ColumnDefinition
+  $c1.Width=New-Object System.Windows.GridLength(1,[System.Windows.GridUnitType]::Star)
+  [void]$row.ColumnDefinitions.Add($c0)
+  [void]$row.ColumnDefinitions.Add($c1)
+  $badge=New-Object System.Windows.Controls.Border
+  $badge.Width=27;$badge.Height=27
+  $badge.CornerRadius=New-Object System.Windows.CornerRadius(7.5)
+  $badge.Background=Brush '#1B3048'
+  $badge.BorderBrush=Brush '#5C7390'
+  $badge.BorderThickness=New-Object System.Windows.Thickness(1)
+  $badge.VerticalAlignment='Center';$badge.HorizontalAlignment='Left'
+  $icon=$null
+  try { $icon=Image-Source ([string]$app.icon); if(-not $icon){$icon=Image-Source ([string]$app.path)} } catch { $icon=$null }
+  if($icon){
+   $img=New-Object System.Windows.Controls.Image
+   $img.Source=$icon;$img.Width=19.5;$img.Height=19.5;$img.Stretch='Uniform'
+   [Windows.Media.RenderOptions]::SetBitmapScalingMode($img,[Windows.Media.BitmapScalingMode]::HighQuality)
+   $img.HorizontalAlignment='Center';$img.VerticalAlignment='Center'
+   $badge.Child=$img
+  } else {
+   $letters='APP'
+   $rawName=[string]$app.name
+   if(-not [string]::IsNullOrWhiteSpace($rawName)){ $letters=$rawName.Substring(0,[Math]::Min(2,$rawName.Length)).ToUpperInvariant() }
+   $glyph=New-Object System.Windows.Controls.TextBlock
+   $glyph.Text=$letters;$glyph.Foreground=Brush '#E7F1FB';$glyph.FontWeight='SemiBold';$glyph.FontSize=9
+   $glyph.HorizontalAlignment='Center';$glyph.VerticalAlignment='Center'
+   $badge.Child=$glyph
+  }
+  [void]$row.Children.Add($badge)
+  $stack=New-Object System.Windows.Controls.StackPanel
+  $stack.VerticalAlignment='Center';$stack.Margin='7.5,0,6,0'
+  $title=New-Object System.Windows.Controls.TextBlock
+  $title.Text=[string]$app.name;$title.Foreground=Brush '#F4F8FC';$title.FontSize=11.25;$title.FontWeight='SemiBold';$title.TextTrimming='CharacterEllipsis'
+  [void]$stack.Children.Add($title)
+  $rawPath=[string]$app.path
+  if(-not [string]::IsNullOrWhiteSpace($rawPath)){
+   $sub=New-Object System.Windows.Controls.TextBlock
+   try { $sub.Text=[IO.Path]::GetFileName($rawPath) } catch { $sub.Text=$rawPath }
+   $sub.Foreground=Brush '#8AA4BE';$sub.FontSize=8.25;$sub.Margin='0,1.5,0,0';$sub.TextTrimming='CharacterEllipsis'
+   [void]$stack.Children.Add($sub)
+  }
+  [System.Windows.Controls.Grid]::SetColumn($stack,1)
+  [void]$row.Children.Add($stack)
+  if($app.enabled -eq $false){ $row.Opacity=0.45 }
+  return $row
+ }
+ function Refresh-List {
+  $idx=$lst.SelectedIndex
+  $lst.Items.Clear()
+  foreach($a in $script:editingApps){[void]$lst.Items.Add((New-TileRow $a))}
+  $empty=$dlg.FindName('ListEmpty')
+  if($empty){ if($script:editingApps.Count -eq 0){$empty.Visibility='Visible'}else{$empty.Visibility='Collapsed'} }
+  if($lst.Items.Count -gt 0){$lst.SelectedIndex=[Math]::Max(0,[Math]::Min($idx,$lst.Items.Count-1))}
+ }
+ function Apply-Fields {
+  $i=$lst.SelectedIndex
+  if($i -lt 0){return}
+  $a=$script:editingApps[$i]
+  if([string]::IsNullOrWhiteSpace($nm.Text)){[Windows.MessageBox]::Show('Tile name cannot be empty.')|Out-Null;return}
+  $a.name=$nm.Text.Trim();$a.path=$pa.Text.Trim();$a.icon=$ic.Text.Trim();$a.enabled=($en.IsChecked -eq $true);$a.description=$ds.Text.Trim();$a.showDescription=($sd.IsChecked -eq $true)
+  Refresh-List
+ }
  $lst.Add_SelectionChanged({$i=$lst.SelectedIndex;if($i -ge 0 -and $i -lt $script:editingApps.Count){$a=$script:editingApps[$i];$nm.Text=$a.name;$pa.Text=$a.path;$ic.Text=$a.icon;$en.IsChecked=$a.enabled;$ds.Text=$a.description;$sd.IsChecked=$a.showDescription}})
  $dlg.FindName('BrowseApp').Add_Click({$p=File-Pick $pa.Text;if($p){$pa.Text=$p}})
  $dlg.FindName('BrowseIcon').Add_Click({$p=File-Pick $ic.Text $true;if($p){$ic.Text=$p}})
