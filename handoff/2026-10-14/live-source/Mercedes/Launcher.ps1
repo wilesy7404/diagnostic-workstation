@@ -109,7 +109,7 @@ $windowXaml=@'
      </StackPanel>
    </Grid>
    <DockPanel Grid.Row="2" LastChildFill="False" VerticalAlignment="Bottom" Margin="0,0,0,3">
-    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center"><Border Width="22" Height="2" Background="THEME_ACCENT" Margin="0,0,10,0"/><TextBlock x:Name="FooterUpdateStatus" Foreground="#AFC6DF" FontSize="11" VerticalAlignment="Center" Text="UNIVERSAL_BRAND_WORKSTATION  |  Checking update status..." TextTrimming="CharacterEllipsis" MaxWidth="560"/></StackPanel>
+    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center"><Border Width="22" Height="2" Background="#C0C6CE" Margin="0,0,10,0"/><TextBlock x:Name="FooterUpdateStatus" Foreground="#AFC6DF" FontSize="11" VerticalAlignment="Center" Text="Checking" TextTrimming="CharacterEllipsis" MaxWidth="560"/></StackPanel>
     <Border DockPanel.Dock="Right" CornerRadius="22" Background="#62121E30" BorderBrush="#729BB8D3" BorderThickness="1" Padding="10,3">
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
        <Button x:Name="SystemButton" Style="{StaticResource FooterButton}">
@@ -130,7 +130,7 @@ $windowXaml=@'
 $escBrand=[Security.SecurityElement]::Escape($brandName)
 $escShort=[Security.SecurityElement]::Escape($brandShort)
 $windowXaml=$windowXaml.Replace('THEME_ACCENT_SOFT',$accentSoft).Replace('THEME_ACCENT',$accent)
-$windowXaml=$windowXaml.Replace('UNIVERSAL_HOME_TITLE',[Security.SecurityElement]::Escape($homeTitle)).Replace('UNIVERSAL_BRAND_LABEL',$escBrand).Replace('UNIVERSAL_BRAND_SHORT',$escShort).Replace('UNIVERSAL_BRAND_WORKSTATION',[Security.SecurityElement]::Escape($brandName.ToUpperInvariant()+' WORKSTATION'))
+$windowXaml=$windowXaml.Replace('UNIVERSAL_HOME_TITLE',[Security.SecurityElement]::Escape($homeTitle)).Replace('UNIVERSAL_BRAND_LABEL',$escBrand).Replace('UNIVERSAL_BRAND_SHORT',$escShort)
 # WPF TextBlock doesn't support LetterSpacing; remove attribute before loading.
 $windowXaml=$windowXaml -replace ' LetterSpacing="1"',''
 $window=[Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader ([xml]$windowXaml)))
@@ -141,7 +141,7 @@ if(-not $headerLogo){throw 'HeaderBrandLogo element missing'}
 $headerLogo.Source=Image-Source $logoPath
 if(-not $headerLogo.Source){throw "Could not load brand logo: $logoPath"}
 
-# MERCEDES-WORKSTATION-FOOTER-UPDATE-STATUS-v2
+# MERCEDES-WORKSTATION-FOOTER-UPDATE-STATUS-v3
 try {
  $script:workstationRoot=Split-Path -Parent $MyInvocation.MyCommand.Path
  $script:workstationLabel=$window.FindName('FooterUpdateStatus')
@@ -151,22 +151,22 @@ try {
  $script:workstationStatusTimer.Add_Tick({
   try {
    $v=(Get-Content (Join-Path $script:workstationRoot 'version.json') -Raw | ConvertFrom-Json).version
-   $s='Update source not connected'
+   $s='Checking'
    $sp=Join-Path $script:workstationRoot 'update-status.json'
    if(Test-Path $sp){
     $st=Get-Content $sp -Raw | ConvertFrom-Json
-    switch($st.state){'current'{$s='Up to date'} 'available'{$s='Update available: '+$st.latest} 'restart'{$s='Restart to finish update'} 'error'{$s='Update check unavailable'} 'unconfigured'{$s='No verified release published'} default{$s='Update source not connected'}}
+    switch($st.state){'current'{$s='Up to date'} 'available'{$s='Update available'} 'restart'{$s='Restart to finish'} 'error'{$s='Unavailable'} 'unconfigured'{$s='No release'} 'offline'{$s='Offline'} default{$s='Checking'}}
    }
-   $script:workstationLabel.Text=($brandName.ToUpperInvariant()+' WORKSTATION  v'+$v+'  |  '+$s)
-  } catch {$script:workstationLabel.Text=($brandName.ToUpperInvariant()+' WORKSTATION | Status unavailable')}
+   $script:workstationLabel.Text=('v'+$v+'  |  '+$s)
+  } catch {$script:workstationLabel.Text='Status unavailable'}
  })
  $window.Add_Loaded({
   $script:workstationStatusTimer.Start()
   try {
    $v=(Get-Content (Join-Path $script:workstationRoot 'version.json') -Raw | ConvertFrom-Json).version
-   $script:workstationLabel.Text=($brandName.ToUpperInvariant()+' WORKSTATION  v'+$v+'  |  Checking update status...')
-  }catch{$script:workstationLabel.Text=($brandName.ToUpperInvariant()+' WORKSTATION | Status unavailable')}
-  # UpdateAgent is started and monitored by UniversalSupervisor.exe. No hidden WPF windows.
+   $script:workstationLabel.Text=('v'+$v+'  |  Checking')
+  }catch{$script:workstationLabel.Text='Status unavailable'}
+  # UpdateAgent is started and monitored by WorkstationManager.exe. No hidden WPF windows.
  })
 } catch {}
 
@@ -253,11 +253,11 @@ function Make-Card($app){
  $footer.Orientation='Horizontal';$footer.Margin='0,6,0,0'
  $line=New-Object System.Windows.Controls.Border
  $line.Width=19;$line.Height=2;$line.CornerRadius=New-Object System.Windows.CornerRadius(2)
- $line.Background=Brush '#45ADFF';$line.VerticalAlignment='Center';$line.Margin='0,0,8,0'
+ $line.Background=Brush '#C0C6CE';$line.VerticalAlignment='Center';$line.Margin='0,0,8,0'
  [void]$footer.Children.Add($line)
  $action=New-Object System.Windows.Controls.TextBlock
  $action.Text=if($app.path -and (Test-Path ([string]$app.path))){'OPEN APPLICATION  >'}else{'CONFIGURE IN ADMIN'}
- $action.Foreground=Brush '#C3DBF5';$action.FontSize=10
+ $action.Foreground=Brush '#D0D5DB';$action.FontSize=10
  [void]$footer.Children.Add($action)
  [System.Windows.Controls.Grid]::SetRow($footer,1)
  [void]$right.Children.Add($footer)
