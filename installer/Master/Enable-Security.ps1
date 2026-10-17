@@ -1,6 +1,6 @@
 # Re-enable Windows Update (Wub /E) and Windows Defender, or re-apply the update block (Wub /D /P).
 # Re-apply does not change Defender. Enable restores the Defender snapshot.
-# Does not change Winlogon or the shell.
+# Elevation relaunches this script at most once, hidden. Does not change Winlogon or the shell.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
@@ -8,7 +8,8 @@ param(
   [string]$Brand,
   [ValidateSet('enable', 'reapply')]
   [string]$Action = 'enable',
-  [switch]$Library
+  [switch]$Library,
+  [switch]$ElevatedRelaunch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,7 +22,7 @@ $masterDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 if ($Library -or $env:MASTER_INSTALLER_LIBRARY -eq '1') { return }
 if (-not (Test-MasterHostWindows)) { throw 'Security undo runs on Windows. Nothing was changed.' }
-if (-not (Test-IsWindowsAdmin)) { throw 'Run this from an elevated PowerShell. Nothing was changed.' }
+Enter-MasterInstallerProcess -ScriptPath $MyInvocation.MyCommand.Path -Bound $PSBoundParameters -AlreadyRelaunched:$ElevatedRelaunch
 
 $parent = Split-Path -Parent $masterDir
 $installerData = $null

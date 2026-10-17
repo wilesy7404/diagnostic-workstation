@@ -1,7 +1,9 @@
 # Install one approved brand bundle, then disable Windows Update and Windows Defender.
-# Defender uses documented Set-MpPreference, policy, and service changes. No extra window is opened.
-# This script does not change Winlogon, the shell, or Run startup.
-# Windows PowerShell 5.1. Run it elevated on a throwaway Windows VM, not on a live shop PC.
+# Defender uses documented Set-MpPreference, policy, and service changes.
+# Elevation relaunches this script at most once. Sub-steps stay in this process.
+# The brand-root install lock stops WorkstationManager from opening another PowerShell.
+# This script does not change Winlogon, the shell, or Run startup, and it does not register a scheduled task.
+# Windows PowerShell 5.1. Run it on a throwaway Windows VM, not on a live shop PC.
 [CmdletBinding()]
 param(
   [ValidateSet('mercedes', 'bmw')]
@@ -13,7 +15,8 @@ param(
   [switch]$OfflineOnly,
   [switch]$VerifyOnly,
   [switch]$AllowDowngrade,
-  [switch]$Library
+  [switch]$Library,
+  [switch]$ElevatedRelaunch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,9 +36,7 @@ if ([string]::IsNullOrWhiteSpace($Brand)) {
 if (-not (Test-MasterHostWindows)) {
   throw 'The master installer runs on Windows. Nothing was installed.'
 }
-if (-not $VerifyOnly -and -not (Test-IsWindowsAdmin)) {
-  throw 'Run the master installer from an elevated PowerShell. Nothing was installed.'
-}
+Enter-MasterInstallerProcess -ScriptPath $MyInvocation.MyCommand.Path -Bound $PSBoundParameters -AlreadyRelaunched:$ElevatedRelaunch -SkipElevation:$VerifyOnly
 
 $repo = Find-MasterRepoRoot $masterDir
 $result = Install-ApprovedBrand -Brand $Brand -Channel $Channel -Tag $Tag -Source $Source -OfflineOnly:$OfflineOnly -VerifyOnly:$VerifyOnly -AllowDowngrade:$AllowDowngrade -ApplySecurity:(-not $VerifyOnly) -RepoRoot $repo

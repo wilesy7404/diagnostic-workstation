@@ -70,6 +70,64 @@ try {
   Assert-True ($entry.Contains('-ApplySecurity:(-not $VerifyOnly)')) 'entry does not apply security after install'
   Assert-True (-not ($entry.Contains('dControl.exe'))) 'entry names dControl.exe'
   Assert-True (-not ($entry.Contains('Probe-DefenderControlCli.ps1'))) 'entry calls the Defender probe'
+  Assert-True (-not ($blob.Contains('Start-Process'))) 'installer starts an unwaited process'
+  Assert-True (-not ($blob.Contains('Register-ScheduledTask'))) 'installer registers a scheduled task'
+  Assert-True (-not ($blob.Contains('schtasks'))) 'installer shells out to task scheduler'
+  Assert-True ($blob.Contains('-ElevatedRelaunch')) 'elevation relaunch has no re-entry guard'
+  Assert-True ($blob.Contains('install-in-progress.lock')) 'supervisor install lock is missing'
+  Assert-True ($entry.Contains('-SkipElevation:$VerifyOnly')) 'verify-only still relaunches for elevation'
+
+  $guardRoot = Join-Path $temp 'guard-root'
+  New-Item -ItemType Directory -Path $guardRoot | Out-Null
+  $relaunches = @{ n = 0 }
+  foreach ($ignored in 1..4) {
+    if (-not (Test-SupervisorRelaunchBlocked $guardRoot)) { $relaunches.n++ }
+  }
+  Assert-True ($relaunches.n -eq 4) 'supervisor guard fired before a lock existed'
+  Set-BrandInstallLock $guardRoot | Out-Null
+  foreach ($ignored in 1..4) {
+    if (-not (Test-SupervisorRelaunchBlocked $guardRoot)) { $relaunches.n++ }
+  }
+  Assert-True ($relaunches.n -eq 4) 'supervisor relaunched while install-in-progress.lock was held'
+  Remove-BrandInstallLock $guardRoot
+  Assert-True (-not (Test-SupervisorRelaunchBlocked $guardRoot)) 'supervisor lock was not removed'
+
+  $supervisorRoot = Join-Path $temp 'supervisor-root'
+  $stoppedIds = New-Object System.Collections.Generic.List[int]
+  $fakeProcesses = @(
+    [pscustomobject]@{ ProcessId = 501; CommandLine = "powershell.exe -File `"$supervisorRoot\Launcher.ps1`"" }
+    [pscustomobject]@{ ProcessId = $PID; CommandLine = "powershell.exe -File `"$supervisorRoot\Launcher.ps1`"" }
+    [pscustomobject]@{ ProcessId = 502; CommandLine = "powershell.exe -WindowStyle Hidden -File `"$supervisorRoot\Watchdog.ps1`"" }
+    [pscustomobject]@{ ProcessId = 503; CommandLine = "powershell.exe -File `"$supervisorRoot\Install-Master.ps1`" -Brand mercedes" }
+    [pscustomobject]@{ ProcessId = 504; CommandLine = "powershell.exe -File `"$supervisorRoot\Enable-Security.ps1`" -Brand mercedes" }
+    [pscustomobject]@{ ProcessId = 505; CommandLine = "`"$supervisorRoot\WorkstationManager.exe`" /supervise" }
+    [pscustomobject]@{ ProcessId = 506; CommandLine = 'powershell.exe -File C:\OtherBrand\Launcher.ps1' }
+  )
+  $stopped = @(Stop-BrandSupervisorProcesses -Root $supervisorRoot -ProcessQuery { $fakeProcesses } -ProcessStop { param($Id) $stoppedIds.Add([int]$Id) })
+  Assert-True (($stoppedIds -join ',') -eq '501,502') 'supervisor stop selected the wrong processes'
+  Assert-True (($stopped -join ',') -eq '501,502') 'supervisor stop did not report the stopped ids'
+
+  $elevationCalls = New-Object System.Collections.Generic.List[object]
+  $elevationStarter = {
+    param($Launch)
+    $elevationCalls.Add($Launch)
+    Assert-True ($Launch.verb -eq 'RunAs') 'elevation did not request RunAs'
+    Assert-True ($Launch.windowStyle -eq 'Hidden') 'elevation relaunch is visible'
+    Assert-True ($Launch.wait) 'elevation relaunch was not awaited'
+    $joined = @($Launch.arguments) -join ' '
+    Assert-True ($joined.Contains('-WindowStyle Hidden')) 'elevation command opens a window'
+    Assert-True ($joined.Contains('-ElevatedRelaunch')) 'elevation command can relaunch again'
+    Assert-True ($joined.Contains('-Brand mercedes')) 'elevation command dropped the brand'
+    return 0
+  }
+  $continued = Invoke-MasterElevatedOnce -ScriptPath 'C:\installer\Install-Master.ps1' -ArgumentList @('-Brand', 'mercedes') -AdminTest { $true } -Starter $elevationStarter
+  Assert-True ($continued.action -eq 'continue' -and $elevationCalls.Count -eq 0) 'already-elevated install relaunched'
+  $relaunched = Invoke-MasterElevatedOnce -ScriptPath 'C:\installer\Install-Master.ps1' -ArgumentList @('-Brand', 'mercedes') -AdminTest { $false } -Starter $elevationStarter
+  Assert-True ($relaunched.action -eq 'relaunched' -and $elevationCalls.Count -eq 1) 'non-elevated install did not relaunch once'
+  Assert-Throws {
+    Invoke-MasterElevatedOnce -ScriptPath 'C:\installer\Install-Master.ps1' -ArgumentList @('-Brand', 'mercedes') -AlreadyRelaunched -AdminTest { $false } -Starter $elevationStarter
+  } 'already relaunched'
+  Assert-True ($elevationCalls.Count -eq 1) 'elevation guard opened a second window'
 
   $mercedesRoot = Resolve-BrandInstallRoot 'mercedes' (Join-Path $temp 'local-mercedes')
   $bmwRoot = Resolve-BrandInstallRoot 'bmw' (Join-Path $temp 'local-bmw')
@@ -177,6 +235,9 @@ try {
     $joined = @($ArgumentList) -join ' '
     $global:MasterTestCalls.Add([pscustomobject]@{ exe = [string]$Exe; arguments = $joined })
     if ((Split-Path -Leaf ([string]$Exe)) -eq 'dControl.exe') { throw 'dControl was started' }
+    if ($global:MasterRequireInstallLock -and -not (Test-SupervisorRelaunchBlocked $installRoot)) {
+      throw 'Windows Update ran without the supervisor lock'
+    }
     return 0
   }
   $stateReader = {
@@ -205,7 +266,14 @@ try {
   }
   $global:MasterDefenderCommands = New-Object System.Collections.Generic.List[object]
   $defenderReader = { New-TestDefenderState 'off' }
-  $defenderSink = { param($Command) $global:MasterDefenderCommands.Add($Command) }
+  $global:MasterRequireInstallLock = $false
+  $defenderSink = {
+    param($Command)
+    if ($global:MasterRequireInstallLock -and -not (Test-SupervisorRelaunchBlocked $installRoot)) {
+      throw 'Defender ran without the supervisor lock'
+    }
+    $global:MasterDefenderCommands.Add($Command)
+  }
 
   $installRoot = Join-Path $temp 'DiagnosticWorkstation'
   New-Item -ItemType Directory -Path $installRoot | Out-Null
@@ -229,7 +297,9 @@ try {
     }
     throw "Unexpected download URL $Url"
   }
+  $global:MasterRequireInstallLock = $true
   $result = Install-ApprovedBrand -Brand 'mercedes' -Channel 'beta' -AllowTestRoot -InstallRoot $installRoot -InstallerData $data -LogDirectory $logs -RepoRoot $fixture -AllowUncheckedProcesses -ApplySecurity -Arch 'x64' -Downloader $downloader -ToolRunner $runner -StateReader $stateReader -TamperPrompt $prompt -DefenderReader $defenderReader -DefenderSink $defenderSink
+  $global:MasterRequireInstallLock = $false
   Assert-True ($result.installed) 'bundle was not installed'
   Assert-True ($result.source -eq 'online') 'online download was not used'
   Assert-True ($result.catalogWarning -match 'Catalog dated') 'expired offline catalog did not warn'
@@ -281,6 +351,9 @@ try {
   Assert-True ($shortcutBlob.Contains('-Action enable')) 'enable action missing'
   Assert-True ($shortcutBlob.Contains('-Action reapply')) 'reapply action missing'
   Assert-True ($shortcutBlob.Contains('Uninstall-MasterBrand.ps1')) 'uninstall hook missing'
+  Assert-True ($shortcutBlob.Contains('-WindowStyle Hidden')) 'security shortcuts open a visible PowerShell window'
+  Assert-True (-not (Test-SupervisorRelaunchBlocked $installRoot)) 'supervisor lock was left on the brand root'
+  Assert-True ($journal.Contains('supervisor-held')) 'supervisor hold was not logged'
 
   $global:MasterTestCalls.Clear()
   $global:MasterDefenderCommands.Clear()

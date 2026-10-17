@@ -1,11 +1,13 @@
 # Security undo hook. Re-enables Windows Update and Windows Defender, then removes the Start Menu entries this installer created.
-# Brand files stay in place. Winlogon, the shell, and Run startup are not changed.
+# Brand files stay in place. Elevation relaunches this script at most once, hidden.
+# Winlogon, the shell, and Run startup are not changed.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
   [ValidateSet('mercedes', 'bmw')]
   [string]$Brand,
-  [switch]$Library
+  [switch]$Library,
+  [switch]$ElevatedRelaunch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +20,7 @@ $masterDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 if ($Library -or $env:MASTER_INSTALLER_LIBRARY -eq '1') { return }
 if (-not (Test-MasterHostWindows)) { throw 'Uninstall undo runs on Windows. Nothing was changed.' }
-if (-not (Test-IsWindowsAdmin)) { throw 'Run this from an elevated PowerShell. Nothing was changed.' }
+Enter-MasterInstallerProcess -ScriptPath $MyInvocation.MyCommand.Path -Bound $PSBoundParameters -AlreadyRelaunched:$ElevatedRelaunch
 
 $parent = Split-Path -Parent $masterDir
 $installerData = $null

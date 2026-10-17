@@ -1,20 +1,99 @@
 # Places a verified brand tree into that brand's allow-listed root.
 # Machine-local files are carried across. Winlogon, the shell, and Run startup are not touched.
 
-function Assert-BrandNotRunning {
+# WorkstationManager waits while <brand root>\install-in-progress.lock exists, then starts
+# Launcher, Dock, and UpdateAgent. A clean exit of those scripts makes it open another
+# powershell.exe. Watchdog.ps1 and WorkstationShell.ps1 do not read the lock; they are stopped
+# for the duration of the swap. WorkstationManager.exe itself is left running so it can keep
+# honoring the lock. This installer does not register a scheduled task and does not start the supervisor.
+$script:BrandLoopSupervisorTokens = @(
+  'Launcher.ps1',
+  'Dock.ps1',
+  'Watchdog.ps1',
+  'WorkstationShell.ps1',
+  'UpdateAgent.ps1',
+  'SystemPanel.ps1',
+  'Restart-Mercedes-Controls.ps1',
+  'Restart-BMW-Controls.ps1'
+)
+
+function Get-BrandInstallLockPath {
   param([Parameter(Mandatory = $true)][string]$Root)
-  if (-not (Test-MasterHostWindows)) { throw 'Could not check running processes. Nothing was installed.' }
-  $leaf = [regex]::Escape((Split-Path -Leaf $Root))
+  return (Join-Path -Path $Root -ChildPath 'install-in-progress.lock')
+}
+
+function Test-SupervisorRelaunchBlocked {
+  param([Parameter(Mandatory = $true)][string]$Root)
+  return (Test-Path -LiteralPath (Get-BrandInstallLockPath $Root))
+}
+
+function Set-BrandInstallLock {
+  param([Parameter(Mandatory = $true)][string]$Root)
+  if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $null }
+  $path = Get-BrandInstallLockPath $Root
+  Write-Utf8NoBom $path ("master-installer " + [datetimeoffset]::UtcNow.ToString('o') + "`n")
+  return $path
+}
+
+function Remove-BrandInstallLock {
+  param([string]$Root)
+  if ([string]::IsNullOrWhiteSpace($Root)) { return }
+  $path = Get-BrandInstallLockPath $Root
+  if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+}
+
+function Test-IsBrandSupervisorCommand {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [string]$CommandLine,
+    [int]$ProcessId
+  )
+  if ($ProcessId -eq $PID) { return $false }
+  if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $false }
+  $norm = $CommandLine.Replace('/', '\')
+  $rootNorm = $Root.Replace('/', '\').TrimEnd('\')
+  if ($norm.IndexOf($rootNorm, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return $false }
+  if ($norm -match 'Install-Master\.ps1|Enable-Security\.ps1|Uninstall-MasterBrand\.ps1') { return $false }
+  foreach ($token in $script:BrandLoopSupervisorTokens) {
+    if ($norm.IndexOf($token, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+  }
+  return $false
+}
+
+function Get-Win32ProcessCommandLines {
+  if (-not (Test-MasterHostWindows)) { return @() }
   try {
-    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-      $_.CommandLine -and
-      $_.CommandLine -match $leaf -and
-      $_.CommandLine -match 'Launcher\.ps1|Dock\.ps1|Watchdog\.ps1|WorkstationManager\.exe|WorkstationShell\.ps1'
+    return @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object {
+      [pscustomobject]@{ ProcessId = [int]$_.ProcessId; CommandLine = [string]$_.CommandLine }
     })
   } catch {
     throw 'Could not check running processes. Nothing was installed.'
   }
-  if ($processes.Count -gt 0) { throw 'That brand is running. Nothing was installed.' }
+}
+
+function Stop-BrandSupervisorProcesses {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [scriptblock]$ProcessQuery,
+    [scriptblock]$ProcessStop
+  )
+  $rows = @()
+  if ($ProcessQuery) { $rows = @(& $ProcessQuery) }
+  elseif (Test-MasterHostWindows) { $rows = @(Get-Win32ProcessCommandLines) }
+  else { return @() }
+  $stopped = New-Object System.Collections.Generic.List[int]
+  foreach ($row in @($rows)) {
+    if (-not $row) { continue }
+    $id = [int]$row.ProcessId
+    if (-not (Test-IsBrandSupervisorCommand -Root $Root -CommandLine ([string]$row.CommandLine) -ProcessId $id)) { continue }
+    if ($ProcessStop) { & $ProcessStop $id }
+    else {
+      if ($env:MASTER_INSTALLER_FORBID_TOOL_EXECUTION -eq '1') { throw 'stopping brand processes is forbidden in this session' }
+      Stop-Process -Id $id -Force -ErrorAction Stop
+    }
+    $stopped.Add($id)
+  }
+  return @($stopped.ToArray())
 }
 
 function Assert-InstallSpace {
@@ -254,8 +333,16 @@ function Install-ApprovedBrand {
       }
     }
     Assert-InstallSpace $root ([int64]$release.bytes)
-    if (-not $AllowUncheckedProcesses) { Assert-BrandNotRunning $root }
+    # Hold the lock before the rename. WorkstationManager will not start a new PowerShell
+    # while it exists. The renamed previous folder takes this copy with it, so the new
+    # root gets a fresh lock before Windows Update or Defender run.
+    Set-BrandInstallLock $root | Out-Null
+    $stopped = @()
+    if (-not $AllowUncheckedProcesses) { $stopped = @(Stop-BrandSupervisorProcesses -Root $root) }
+    Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'supervisor-held'; brand = $Brand; stopped = @($stopped) })
     Install-VerifiedTree -Staging $staging -Root $root -Brand $Brand -Tag ([string]$release.tag) -Version ([string]$release.version) -ZipSha256 ([string]$release.sha256) -ProgressPath $progress -AllowDowngrade:$AllowDowngrade
+    Set-BrandInstallLock $root | Out-Null
+    if (-not $AllowUncheckedProcesses) { Stop-BrandSupervisorProcesses -Root $root | Out-Null }
     Write-TrustState $trust ([int]$loaded.Catalog.catalogSerial) $loaded.Digest
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'installed'; brand = $Brand; root = $root; tag = [string]$release.tag })
     $security = [pscustomobject]@{ windowsUpdate = 'not-run'; defender = 'not-run'; tamper = 'not-checked' }
@@ -276,6 +363,7 @@ function Install-ApprovedBrand {
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'failed'; brand = $Brand; message = $_.Exception.Message })
     throw
   } finally {
+    if (-not $VerifyOnly) { Remove-BrandInstallLock $root }
     if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
     if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
   }

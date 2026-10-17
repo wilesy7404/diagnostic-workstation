@@ -33,7 +33,13 @@ Other brand ids are refused. The installer copies `apps.json`, `controls-pin.jso
 
 ## Security steps
 
-After a verified install, the installer always runs the security step. There is no opt-in toggle.
+After a verified install, the installer always runs the security step. There is no opt-in toggle. The whole run stays in one elevated process. If it is not already elevated, it relaunches itself once, hidden, and waits. The relaunch passes `-ElevatedRelaunch`. A second relaunch is refused, so a failed admin check cannot open another window.
+
+## Why PowerShell windows were repeating
+
+WorkstationManager starts a new `powershell.exe` for Launcher, Dock, and UpdateAgent whenever those processes exit. It waits only while `<brand root>\install-in-progress.lock` exists. The installer renames that folder and then stops Windows Update and Defender services, which makes the watched scripts exit. The previous build never wrote the lock, so the supervisor opened another PowerShell for each exit. Watchdog and the shell host do the same on a timer, and some of those start paths leave the console visible. On a shop account that is already an administrator, those windows are elevated. Aborting the run left Defender and Windows Update running because the failure path rolls the security changes back.
+
+The installer now writes `install-in-progress.lock` in the brand root before the rename and again on the new root before the security steps, and removes it when the run finishes. It stops Launcher, Dock, Watchdog, WorkstationShell, and UpdateAgent for that root. It leaves `WorkstationManager.exe` running so the manager can keep honoring the lock. It does not start the supervisor afterward, does not register a scheduled task, and does not change Winlogon. Start Menu undo shortcuts use `-WindowStyle Hidden`. Windows Update Blocker is still started hidden and awaited. Defender changes stay in-process.
 
 Windows Update uses the vendored Sordum Windows Update Blocker, hidden and elevated:
 
@@ -123,3 +129,4 @@ Exit codes from `Install-Master.ps1` after the brand files are in place:
 3. On a throwaway VM, run the installer and confirm Defender realtime protection, the policy values, and `WinDefend` actually change, then run **Re-enable Windows Update and Defender** and confirm every setting, policy value, and service returns to the captured state.
 4. On a throwaway VM with Tamper Protection on, confirm the installer prompts once, changes nothing while it stays on, and continues only after it is turned off.
 5. Confirm the install did not change Winlogon or the shell, and did not start the old Defender Control program.
+6. With WorkstationManager already running, confirm the install opens no extra PowerShell windows, `install-in-progress.lock` exists only during the run, and the manager does not relaunch Launcher, Dock, or UpdateAgent until the lock is gone.

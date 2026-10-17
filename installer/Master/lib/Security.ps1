@@ -256,7 +256,7 @@ function Register-SecurityShortcuts {
   $recorded = @()
   foreach ($entry in $entries) {
     $scriptPath = Join-Path -Path $master -ChildPath $entry.script
-    $argumentLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" {1}' -f $scriptPath, $entry.arguments
+    $argumentLine = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" {1}' -f $scriptPath, $entry.arguments
     $lnk = Join-Path -Path $StartMenuRoot -ChildPath ($entry.name + '.lnk')
     $recorded += [pscustomobject]@{ name = $entry.name; lnk = $lnk; target = $powershell; arguments = $argumentLine }
     if ((Test-MasterHostWindows) -and $env:MASTER_INSTALLER_FORBID_TOOL_EXECUTION -ne '1') {

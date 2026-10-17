@@ -29,6 +29,113 @@ function Test-IsWindowsAdmin {
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-MasterWindowsPowerShell {
+  if ((Test-MasterHostWindows) -and $env:SystemRoot) {
+    $candidate = Join-Path -Path $env:SystemRoot -ChildPath 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (Test-Path -LiteralPath $candidate) { return $candidate }
+  }
+  return 'powershell.exe'
+}
+
+function Format-MasterCommandLine {
+  param([string[]]$ArgumentList)
+  $parts = New-Object System.Collections.Generic.List[string]
+  foreach ($arg in @($ArgumentList)) {
+    if ($null -eq $arg) { continue }
+    $text = [string]$arg
+    if ($text -match '[\s"]') { $parts.Add('"' + $text.Replace('"', '\"') + '"') }
+    else { $parts.Add($text) }
+  }
+  return ($parts -join ' ')
+}
+
+function Get-MasterForwardArguments {
+  param($Bound)
+  $forward = New-Object System.Collections.Generic.List[string]
+  foreach ($key in @($Bound.Keys)) {
+    if ($key -eq 'ElevatedRelaunch' -or $key -eq 'Library') { continue }
+    $value = $Bound[$key]
+    if ($value -is [switch] -or $value -is [bool]) {
+      if ($value) { $forward.Add("-$key") }
+    } else {
+      $forward.Add("-$key")
+      $forward.Add([string]$value)
+    }
+  }
+  return @($forward.ToArray())
+}
+
+function New-MasterHiddenCommand {
+  param([Parameter(Mandatory = $true)][string]$ScriptPath, [string[]]$ArgumentList)
+  $command = New-Object System.Collections.Generic.List[string]
+  foreach ($flag in @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $ScriptPath)) {
+    $command.Add($flag)
+  }
+  foreach ($item in @($ArgumentList)) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$item)) { $command.Add([string]$item) }
+  }
+  if (-not ($command.Contains('-ElevatedRelaunch'))) { $command.Add('-ElevatedRelaunch') }
+  return @($command.ToArray())
+}
+
+# Relaunch the current entry script at most once, hidden, and wait for it.
+# The child is marked with -ElevatedRelaunch so a failed admin check cannot open another window.
+function Invoke-MasterElevatedOnce {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    [string[]]$ArgumentList,
+    [switch]$AlreadyRelaunched,
+    [scriptblock]$AdminTest,
+    [scriptblock]$Starter
+  )
+  $isAdmin = $false
+  if ($AdminTest) { $isAdmin = [bool](& $AdminTest) }
+  else { $isAdmin = Test-IsWindowsAdmin }
+  if ($isAdmin) { return [pscustomobject]@{ action = 'continue'; relaunched = $false; exitCode = 0 } }
+  if ($AlreadyRelaunched -or $env:MASTER_INSTALLER_ELEVATION -eq '1') {
+    throw 'The installer already relaunched for elevation. Refusing to open another window. Nothing was installed.'
+  }
+  $arguments = @(New-MasterHiddenCommand $ScriptPath $ArgumentList)
+  $launch = [pscustomobject]@{
+    file = (Get-MasterWindowsPowerShell)
+    arguments = $arguments
+    verb = 'RunAs'
+    windowStyle = 'Hidden'
+    wait = $true
+  }
+  if ($Starter) {
+    $box = New-Object object[] 1
+    $box[0] = $launch
+    $code = $Starter.InvokeReturnAsIs($box)
+    return [pscustomobject]@{ action = 'relaunched'; relaunched = $true; exitCode = [int]$code }
+  }
+  if ($env:MASTER_INSTALLER_FORBID_TOOL_EXECUTION -eq '1') { throw 'elevation relaunch is forbidden in this session' }
+  if (-not (Test-MasterHostWindows)) { throw 'The master installer runs on Windows. Nothing was installed.' }
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $launch.file
+  $psi.Arguments = (Format-MasterCommandLine $arguments)
+  $psi.UseShellExecute = $true
+  $psi.Verb = 'RunAs'
+  $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+  try { $process = [System.Diagnostics.Process]::Start($psi) } catch { throw 'Elevation was declined. Nothing was installed.' }
+  if (-not $process) { throw 'Elevation was declined. Nothing was installed.' }
+  $process.WaitForExit()
+  return [pscustomobject]@{ action = 'relaunched'; relaunched = $true; exitCode = [int]$process.ExitCode }
+}
+
+function Enter-MasterInstallerProcess {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    $Bound,
+    [switch]$AlreadyRelaunched,
+    [switch]$SkipElevation
+  )
+  if ($SkipElevation) { return }
+  $forward = @(Get-MasterForwardArguments $Bound)
+  $decision = Invoke-MasterElevatedOnce -ScriptPath $ScriptPath -ArgumentList $forward -AlreadyRelaunched:$AlreadyRelaunched
+  if ($decision.action -eq 'relaunched') { exit $decision.exitCode }
+}
+
 function Join-MasterPath {
   param([Parameter(Mandatory = $true)][string]$Base, [Parameter(Mandatory = $true)][string[]]$Child)
   $path = $Base
