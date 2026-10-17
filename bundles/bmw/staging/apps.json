@@ -1,0 +1,64 @@
+{
+  "apps": [
+    {
+      "name": "ISTA",
+      "path": "",
+      "icon": "",
+      "symbol": "APP",
+      "enabled": true,
+      "description": "Diagnostics and programming",
+      "showDescription": true,
+      "placeholder": true
+    },
+    {
+      "name": "ISTA+ / ISPI",
+      "path": "",
+      "icon": "",
+      "symbol": "APP",
+      "enabled": true,
+      "description": "Service information and programming",
+      "showDescription": true,
+      "placeholder": true
+    },
+    {
+      "name": "E-Sys",
+      "path": "",
+      "icon": "",
+      "symbol": "APP",
+      "enabled": true,
+      "description": "Coding and ECU programming",
+      "showDescription": true,
+      "placeholder": true
+    },
+    {
+      "name": "BMW AIR",
+      "path": "",
+      "icon": "",
+      "symbol": "APP",
+      "enabled": true,
+      "description": "Repair and technical information",
+      "showDescription": true,
+      "placeholder": true
+    },
+    {
+      "name": "ETK",
+      "path": "",
+      "icon": "",
+      "symbol": "APP",
+      "enabled": true,
+      "description": "Electronic parts catalog",
+      "showDescription": true,
+      "placeholder": true
+    },
+    {
+      "name": "TIS",
+      "path": "",
+      "icon": "",
+      "symbol": "APP",
+      "enabled": true,
+      "description": "Technical information system",
+      "showDescription": true,
+      "placeholder": true
+    }
+  ]
+}
