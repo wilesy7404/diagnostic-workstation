@@ -1,6 +1,4 @@
-# Approved-tool wrapper. The wrapper checks pinned hashes and runs the tool's own arguments.
-# It does not implement a Windows Update or Windows Defender disable method itself.
-#
+# Approved-tool wrapper for Windows Update Blocker, plus the native Defender control module.
 # Windows Update Blocker arguments come from tools/security/wub/tool-manifest.json:
 #   disable / re-apply: Wub_x64.exe /D /P   (32-bit Windows uses Wub.exe)
 #   enable / undo:      Wub_x64.exe /E
@@ -8,9 +6,12 @@
 # Windows binaries, so a throwaway Windows VM still has to confirm `Wub_x64.exe /?`
 # before this is merged. Windows Feature Updates can reset WUB; re-apply /D /P afterward.
 #
-# Defender Control v2.1 ships with command-line support removed (ReadMe v2.0, Sep 2021).
-# While tool-manifest status is blocked-cli-unverified this wrapper does not start
-# dControl.exe, does not pass /D /E /G, and does not open its window.
+# Defender is changed by installer/Master/lib/Defender.ps1 (Set-MpPreference, policy, WinDefend).
+# The old Defender Control binary is not shipped and is not started.
+
+if (-not (Get-Command -Name Invoke-DefenderControl -ErrorAction SilentlyContinue)) {
+  . (Join-Path -Path $PSScriptRoot -ChildPath 'Defender.ps1')
+}
 
 function Get-SecurityManifest {
   param([Parameter(Mandatory = $true)][string]$ToolsRoot, [Parameter(Mandatory = $true)][string]$Slot)
@@ -205,50 +206,13 @@ function Invoke-WindowsUpdateTool {
 
 function Invoke-DefenderDisable {
   param(
-    [Parameter(Mandatory = $true)][string]$ToolsRoot,
     [Parameter(Mandatory = $true)][string]$LogDirectory,
-    [scriptblock]$ToolRunner,
-    [scriptblock]$TamperReader,
+    [Parameter(Mandatory = $true)][string]$SnapshotPath,
+    [scriptblock]$ReadState,
+    [scriptblock]$CommandSink,
     [scriptblock]$TamperPrompt
   )
-  $loaded = Get-SecurityManifest $ToolsRoot 'dcontrol'
-  Assert-ManifestFiles $loaded
-  $pre = Get-DefenderSnapshot $TamperReader
-  $manifest = $loaded.Manifest
-  $disableArgs = @($manifest.disableArgs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
-  $verified = ([string]$manifest.status -eq 'wired') -and [bool]$manifest.cliVerifiedOnWindows -and ($disableArgs.Count -gt 0)
-  if (-not $verified) {
-    Add-MasterJournal $LogDirectory ([pscustomobject]@{
-      step = 'defender-blocked'; status = 'blocked-cli-unverified'; pre = $pre; post = $pre; changed = $false
-      reason = [string]$manifest.blockedReason
-    })
-    return [pscustomobject]@{ status = 'blocked-cli-unverified'; changed = $false; tamper = [string]$pre.tamper; pre = $pre; post = $pre }
-  }
-  $tamper = [string]$pre.tamper
-  if ($tamper -ne 'off') {
-    $accepted = Request-TamperProtectionOff $TamperPrompt
-    if (-not $accepted) {
-      Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'defender-tamper'; status = 'tamper-blocked'; tamper = $tamper; changed = $false })
-      return [pscustomobject]@{ status = 'tamper-blocked'; changed = $false; tamper = $tamper; pre = $pre; post = $pre }
-    }
-    $again = Get-DefenderSnapshot $TamperReader
-    $tamper = [string]$again.tamper
-    if ($tamper -ne 'off') {
-      Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'defender-tamper'; status = 'tamper-blocked'; tamper = $tamper; changed = $false })
-      return [pscustomobject]@{ status = 'tamper-blocked'; changed = $false; tamper = $tamper; pre = $pre; post = $again }
-    }
-    $pre = $again
-  }
-  $exeName = [string]@($manifest.binaries)[0].name
-  $exe = Join-Path -Path $loaded.Directory -ChildPath $exeName
-  $arguments = $disableArgs
-  $exitCode = Start-HiddenApprovedTool $exe $arguments $ToolRunner
-  $post = Get-DefenderSnapshot $TamperReader
-  Add-MasterJournal $LogDirectory ([pscustomobject]@{
-    step = 'defender-post'; exitCode = $exitCode; arguments = ($arguments -join ' '); pre = $pre; post = $post
-  })
-  if ($exitCode -ne 0) { throw "Defender tool exited $exitCode" }
-  return [pscustomobject]@{ status = 'disabled'; changed = $true; tamper = 'off'; exitCode = $exitCode; pre = $pre; post = $post }
+  return Invoke-DefenderControl -Action 'disable' -LogDirectory $LogDirectory -SnapshotPath $SnapshotPath -ReadState $ReadState -CommandSink $CommandSink -TamperPrompt $TamperPrompt
 }
 
 function Copy-MasterCommands {
@@ -256,7 +220,7 @@ function Copy-MasterCommands {
   $source = Join-MasterPath $RepoRoot @('installer', 'Master')
   $dest = Join-Path -Path $InstallerData -ChildPath 'Master'
   New-Item -ItemType Directory -Force -Path $dest, (Join-Path $dest 'lib') | Out-Null
-  foreach ($name in @('Enable-Security.ps1', 'Uninstall-MasterBrand.ps1', 'Install-Master.ps1', 'Probe-DefenderControlCli.ps1')) {
+  foreach ($name in @('Enable-Security.ps1', 'Uninstall-MasterBrand.ps1', 'Install-Master.ps1')) {
     $file = Join-Path -Path $source -ChildPath $name
     if (Test-Path -LiteralPath $file) { Copy-Item -LiteralPath $file -Destination (Join-Path $dest $name) -Force }
   }
@@ -322,12 +286,13 @@ function Invoke-AutomaticSecurity {
     [scriptblock]$ToolRunner,
     [scriptblock]$StateReader,
     [scriptblock]$TamperReader,
-    [scriptblock]$TamperPrompt
+    [scriptblock]$TamperPrompt,
+    [scriptblock]$DefenderReader,
+    [scriptblock]$DefenderSink
   )
   $sourceTools = Find-SecurityToolsRoot $RepoRoot
   $deployed = Join-MasterPath $InstallerData @('tools', 'security')
   $wubCopy = Copy-SecuritySlot (Get-SecurityManifest $sourceTools 'wub') $deployed
-  $defenderCopy = Copy-SecuritySlot (Get-SecurityManifest $sourceTools 'dcontrol') $deployed
   Copy-MasterCommands $RepoRoot $InstallerData
   $shortcutRecord = Register-SecurityShortcuts $Brand $InstallerData $StartMenuRoot
   $update = [pscustomobject]@{ status = 'failed'; error = $null }
@@ -337,7 +302,10 @@ function Invoke-AutomaticSecurity {
     $update = [pscustomobject]@{ status = 'failed'; error = $_.Exception.Message }
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'windows-update-failed'; message = $_.Exception.Message })
   }
-  $defender = Invoke-DefenderDisable -ToolsRoot $deployed -LogDirectory $LogDirectory -ToolRunner $ToolRunner -TamperReader $TamperReader -TamperPrompt $TamperPrompt
+  $reader = $DefenderReader
+  if (-not $reader -and $TamperReader) { $reader = $TamperReader }
+  $snapshot = Join-Path -Path $InstallerData -ChildPath 'defender-pre-state.json'
+  $defender = Invoke-DefenderDisable -LogDirectory $LogDirectory -SnapshotPath $snapshot -ReadState $reader -CommandSink $DefenderSink -TamperPrompt $TamperPrompt
   $state = [ordered]@{
     brand = $Brand
     utc = [datetimeoffset]::UtcNow.ToString('o')
@@ -347,7 +315,7 @@ function Invoke-AutomaticSecurity {
     shortcuts = $shortcutRecord
     featureUpdateNote = 'Windows Feature Updates may reset Windows Update Blocker. Use Re-apply Windows Update block.'
     wubDirectory = $wubCopy.Directory
-    defenderDirectory = $defenderCopy.Directory
+    defenderControl = 'native-powershell'
   }
   Write-Utf8NoBom (Join-Path $InstallerData ("security-state-{0}.json" -f $Brand)) (($state | ConvertTo-Json -Depth 6) + "`n")
   return [pscustomobject]@{
@@ -366,7 +334,10 @@ function Invoke-SecurityUndo {
     [string]$RepoRoot,
     [string]$Arch,
     [scriptblock]$ToolRunner,
-    [scriptblock]$StateReader
+    [scriptblock]$StateReader,
+    [scriptblock]$DefenderReader,
+    [scriptblock]$DefenderSink,
+    [scriptblock]$TamperPrompt
   )
   if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Find-MasterRepoRoot $PSScriptRoot }
   $tools = $null
@@ -381,19 +352,13 @@ function Invoke-SecurityUndo {
     $LogDirectory = Join-Path $base 'logs'
   }
   $result = Invoke-WindowsUpdateTool -ToolsRoot $tools -Action $Action -LogDirectory $LogDirectory -Arch $Arch -ToolRunner $ToolRunner -StateReader $StateReader
-  $defender = Get-SecurityManifest $tools 'dcontrol'
-  $defenderStatus = 'blocked-cli-unverified'
-  $enableArgs = @($defender.Manifest.enableArgs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
-  if (([string]$defender.Manifest.status -eq 'wired') -and [bool]$defender.Manifest.cliVerifiedOnWindows -and ($enableArgs.Count -gt 0) -and $Action -eq 'enable') {
-    $exe = Join-Path $defender.Directory ([string]@($defender.Manifest.binaries)[0].name)
-    $code = Start-HiddenApprovedTool $exe $enableArgs $ToolRunner
-    if ($code -ne 0) { throw "Defender tool enable exited $code" }
-    $defenderStatus = 'enabled'
-  } else {
-    Add-MasterJournal $LogDirectory ([pscustomobject]@{
-      step = 'defender-undo-blocked'; brand = $Brand; status = 'blocked-cli-unverified'
-      reason = [string]$defender.Manifest.blockedReason
-    })
+  $defenderStatus = 'not-run'
+  if ($Action -eq 'enable') {
+    $snapshotRoot = $InstallerData
+    if ([string]::IsNullOrWhiteSpace($snapshotRoot)) { $snapshotRoot = $LogDirectory }
+    $snapshot = Join-Path -Path $snapshotRoot -ChildPath 'defender-pre-state.json'
+    $defenderResult = Invoke-DefenderControl -Action 'enable' -LogDirectory $LogDirectory -SnapshotPath $snapshot -ReadState $DefenderReader -CommandSink $DefenderSink -TamperPrompt $TamperPrompt
+    $defenderStatus = [string]$defenderResult.status
   }
   return [pscustomobject]@{ windowsUpdate = $result.status; defender = $defenderStatus; brand = $Brand }
 }

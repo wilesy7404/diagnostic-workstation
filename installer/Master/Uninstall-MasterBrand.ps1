@@ -1,6 +1,5 @@
-# Security undo hook. Re-enables Windows Update and removes the Start Menu entries this installer created.
+# Security undo hook. Re-enables Windows Update and Windows Defender, then removes the Start Menu entries this installer created.
 # Brand files stay in place. Winlogon, the shell, and Run startup are not changed.
-# Defender re-enable is blocked until Defender Control has a verified silent command line.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
@@ -14,6 +13,7 @@ $masterDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $masterDir 'lib/Common.ps1')
 . (Join-Path $masterDir 'lib/Catalog.ps1')
 . (Join-Path $masterDir 'lib/Bundle.ps1')
+. (Join-Path $masterDir 'lib/Defender.ps1')
 . (Join-Path $masterDir 'lib/Security.ps1')
 
 if ($Library -or $env:MASTER_INSTALLER_LIBRARY -eq '1') { return }
@@ -41,7 +41,9 @@ foreach ($recordPath in $recordPaths) {
     }
   }
 }
-Write-Output 'Windows Update re-enable was requested. Brand files were left in place. Shell startup was not changed.'
+Write-Output 'Windows Update and Windows Defender re-enable were requested. Brand files were left in place. Shell startup was not changed.'
 Write-Output ("Defender undo status: {0}" -f $result.defender)
 if ([string]$result.windowsUpdate -ne 'enabled') { exit 2 }
+if ([string]$result.defender -eq 'tamper-blocked') { exit 10 }
+if ([string]$result.defender -ne 'enabled') { exit 11 }
 exit 0

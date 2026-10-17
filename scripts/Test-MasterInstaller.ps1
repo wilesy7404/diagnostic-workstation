@@ -6,6 +6,7 @@ $lib = Join-Path $repo 'installer/Master/lib'
 . (Join-Path $lib 'Common.ps1')
 . (Join-Path $lib 'Catalog.ps1')
 . (Join-Path $lib 'Bundle.ps1')
+. (Join-Path $lib 'Defender.ps1')
 . (Join-Path $lib 'Security.ps1')
 . (Join-Path $lib 'Install.ps1')
 
@@ -46,12 +47,25 @@ function New-FixtureZip([string]$Path, $Files) {
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('master-installer-' + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
-  $banned = @('Set-MpPreference', 'Add-MpPreference', 'DisableRealtimeMonitoring', 'DisableAntiSpyware', 'CurrentVersion\Winlogon')
+  $banned = @('CurrentVersion\Winlogon', 'dControl.exe')
   $sources = @(Get-ChildItem -Path (Join-Path $repo 'installer/Master') -Filter '*.ps1' -Recurse)
   $blob = ($sources | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
   foreach ($word in $banned) {
     Assert-True (-not ($blob.Contains($word))) "installer source contains $word"
   }
+  Assert-True ($blob.Contains('Set-MpPreference')) 'native Defender control is missing'
+  Assert-True ($blob.Contains('DisableAntiSpyware')) 'Defender policy keys are missing'
+  Assert-True ($blob.Contains('DisableOnAccessProtection')) 'on-access policy is missing'
+  $plan = Get-DefenderControlPlan
+  foreach ($name in @('DisableRealtimeMonitoring', 'DisableBehaviorMonitoring', 'DisableIOAVProtection', 'DisableScriptScanning', 'DisableBlockAtFirstSeen', 'DisableIntrusionPreventionSystem', 'DisableEmailScanning', 'DisableRemovableDriveScanning', 'DisableScanningMappedNetworkDrivesForFullScan', 'DisableArchiveScanning', 'PUAProtection', 'MAPSReporting', 'SubmitSamplesConsent')) {
+    $found = @($plan.Preferences | Where-Object { $_.Name -eq $name })
+    Assert-True ($found.Count -eq 1) "preference $name is missing from the Defender plan"
+  }
+  foreach ($name in @('DisableAntiSpyware', 'DisableAntiVirus', 'DisableRealtimeMonitoring', 'DisableBehaviorMonitoring', 'DisableOnAccessProtection', 'DisableScanOnRealtimeEnable', 'DisableIOAVProtection', 'DisableScriptScanning')) {
+    $found = @($plan.Policies | Where-Object { $_.Name -eq $name })
+    Assert-True ($found.Count -eq 1) "policy $name is missing from the Defender plan"
+  }
+  Assert-True (($plan.Services -join ',') -eq 'WinDefend,WdNisSvc,MDCoreSvc') 'Defender service list changed'
   $entry = [System.IO.File]::ReadAllText((Join-Path $repo 'installer/Master/Install-Master.ps1'))
   Assert-True ($entry.Contains('-ApplySecurity:(-not $VerifyOnly)')) 'entry does not apply security after install'
   Assert-True (-not ($entry.Contains('dControl.exe'))) 'entry names dControl.exe'
@@ -172,6 +186,26 @@ try {
   }
   $global:MasterPromptRan = $false
   $prompt = { param($Message) $global:MasterPromptRan = $true; return $true }
+  function New-TestDefenderState([string]$Tamper) {
+    return [pscustomobject]@{
+      tamper = $Tamper
+      preferences = @{
+        DisableRealtimeMonitoring = $false
+        DisableBehaviorMonitoring = $false
+        DisableIOAVProtection = $false
+        DisableScriptScanning = $false
+      }
+      policies = @()
+      services = @(
+        [pscustomobject]@{ name = 'WinDefend'; present = $true; status = 'Running'; startMode = 'Automatic' }
+        [pscustomobject]@{ name = 'WdNisSvc'; present = $true; status = 'Running'; startMode = 'Auto' }
+        [pscustomobject]@{ name = 'MDCoreSvc'; present = $false; status = 'absent'; startMode = '' }
+      )
+    }
+  }
+  $global:MasterDefenderCommands = New-Object System.Collections.Generic.List[object]
+  $defenderReader = { New-TestDefenderState 'off' }
+  $defenderSink = { param($Command) $global:MasterDefenderCommands.Add($Command) }
 
   $installRoot = Join-Path $temp 'DiagnosticWorkstation'
   New-Item -ItemType Directory -Path $installRoot | Out-Null
@@ -195,7 +229,7 @@ try {
     }
     throw "Unexpected download URL $Url"
   }
-  $result = Install-ApprovedBrand -Brand 'mercedes' -Channel 'beta' -AllowTestRoot -InstallRoot $installRoot -InstallerData $data -LogDirectory $logs -RepoRoot $fixture -AllowUncheckedProcesses -ApplySecurity -Arch 'x64' -Downloader $downloader -ToolRunner $runner -StateReader $stateReader -TamperPrompt $prompt
+  $result = Install-ApprovedBrand -Brand 'mercedes' -Channel 'beta' -AllowTestRoot -InstallRoot $installRoot -InstallerData $data -LogDirectory $logs -RepoRoot $fixture -AllowUncheckedProcesses -ApplySecurity -Arch 'x64' -Downloader $downloader -ToolRunner $runner -StateReader $stateReader -TamperPrompt $prompt -DefenderReader $defenderReader -DefenderSink $defenderSink
   Assert-True ($result.installed) 'bundle was not installed'
   Assert-True ($result.source -eq 'online') 'online download was not used'
   Assert-True ($result.catalogWarning -match 'Catalog dated') 'expired offline catalog did not warn'
@@ -212,8 +246,8 @@ try {
   Assert-True ($marker.brand -eq 'mercedes') 'marker brand mismatch'
   Assert-True ($marker.shellRegistration -eq 'not-changed') 'marker recorded a shell change'
   Assert-True ($result.windowsUpdate -eq 'disabled') 'Windows Update tool was not recorded'
-  Assert-True ($result.defender -eq 'blocked-cli-unverified') 'Defender was not left blocked'
-  Assert-True (-not $global:MasterPromptRan) 'Tamper prompt ran while Defender is blocked'
+  Assert-True ($result.defender -eq 'disabled') 'Defender was not disabled'
+  Assert-True (-not $global:MasterPromptRan) 'Tamper prompt ran while Tamper Protection was off'
   $wubCalls = @($global:MasterTestCalls | Where-Object { $_.exe -match 'Wub_x64.exe' -and $_.arguments -eq '/D /P' })
   Assert-True ($wubCalls.Count -eq 1) 'Wub_x64.exe /D /P was not the disable command'
   Assert-True (@($global:MasterTestCalls | Where-Object { $_.exe -match 'dControl' }).Count -eq 0) 'dControl was invoked'
@@ -221,7 +255,26 @@ try {
   Assert-True ($journal.Contains('windows-update-pre')) 'pre-state was not logged'
   Assert-True ($journal.Contains('windows-update-post')) 'post-state was not logged'
   Assert-True ($journal.Contains('Feature Updates may reset')) 'feature-update note missing'
-  Assert-True ($journal.Contains('defender-blocked')) 'defender block was not logged'
+  Assert-True ($journal.Contains('defender-pre')) 'defender pre-state was not logged'
+  Assert-True ($journal.Contains('defender-post')) 'defender post-state was not logged'
+  $snapshot = Read-JsonFile (Join-Path $data 'defender-pre-state.json')
+  Assert-True ($snapshot.schema -eq 'diagnostic-workstation.defender-snapshot/v1') 'defender snapshot was not saved'
+  foreach ($item in @($plan.Preferences)) {
+    $hit = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-MpPreference' -and $_.name -eq $item.Name })
+    Assert-True ($hit.Count -eq 1) "disable did not set $($item.Name)"
+    Assert-True ([string]$hit[0].value -eq [string]$item.Disable) "disable value for $($item.Name)"
+  }
+  $spyware = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' -and $_.path -eq 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' })
+  Assert-True ($spyware.Count -eq 1 -and [int]$spyware[0].value -eq 1) 'DisableAntiSpyware was not set'
+  $onAccess = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableOnAccessProtection' })
+  Assert-True ($onAccess.Count -eq 1 -and [int]$onAccess[0].value -eq 1) 'on-access policy was not set'
+  $disableNames = @($global:MasterDefenderCommands | ForEach-Object { '{0}:{1}' -f $_.kind, $_.name })
+  $nisAt = [array]::IndexOf($disableNames, 'Set-Service:WdNisSvc')
+  $winAt = [array]::IndexOf($disableNames, 'Set-Service:WinDefend')
+  Assert-True ($nisAt -ge 0 -and $winAt -gt $nisAt) 'WinDefend was not stopped after WdNisSvc'
+  $winDisable = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WinDefend' })
+  Assert-True ($winDisable.Count -eq 1 -and $winDisable[0].startupType -eq 'Disabled' -and $winDisable[0].status -eq 'Stopped') 'WinDefend was not disabled'
+  Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.name -eq 'MDCoreSvc' }).Count -eq 0) 'absent MDCoreSvc was changed'
   $shortcuts = Read-JsonFile (Join-Path $data 'shortcuts-mercedes.json')
   $shortcutBlob = $shortcuts | ConvertTo-Json -Depth 6
   Assert-True ($shortcutBlob.Contains('Re-enable Windows Update and Defender')) 're-enable shortcut missing'
@@ -230,14 +283,33 @@ try {
   Assert-True ($shortcutBlob.Contains('Uninstall-MasterBrand.ps1')) 'uninstall hook missing'
 
   $global:MasterTestCalls.Clear()
-  $undo = Invoke-SecurityUndo -Brand 'mercedes' -Action 'enable' -InstallerData $data -RepoRoot $fixture -LogDirectory $logs -Arch 'x64' -ToolRunner $runner -StateReader $stateReader
+  $global:MasterDefenderCommands.Clear()
+  $undo = Invoke-SecurityUndo -Brand 'mercedes' -Action 'enable' -InstallerData $data -RepoRoot $fixture -LogDirectory $logs -Arch 'x64' -ToolRunner $runner -StateReader $stateReader -DefenderReader $defenderReader -DefenderSink $defenderSink -TamperPrompt $prompt
   Assert-True ($undo.windowsUpdate -eq 'enabled') 'undo did not request enable'
-  Assert-True ($undo.defender -eq 'blocked-cli-unverified') 'undo changed Defender'
+  Assert-True ($undo.defender -eq 'enabled') 'undo did not re-enable Defender'
+  Assert-True (-not $global:MasterPromptRan) 'Tamper prompt ran during Defender undo'
+  $restoredRealtime = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-MpPreference' -and $_.name -eq 'DisableRealtimeMonitoring' })
+  Assert-True ($restoredRealtime.Count -eq 1 -and [string]$restoredRealtime[0].value -eq 'False') 'realtime monitoring was not restored'
+  $maps = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-MpPreference' -and $_.name -eq 'MAPSReporting' })
+  Assert-True ($maps.Count -eq 1 -and [string]$maps[0].value -eq '2') 'uncaptured MAPSReporting did not return to the default'
+  $removedSpyware = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' })
+  Assert-True ($removedSpyware.Count -eq 1) 'DisableAntiSpyware policy was not removed'
+  $enableNames = @($global:MasterDefenderCommands | ForEach-Object { '{0}:{1}' -f $_.kind, $_.name })
+  $enableWin = [array]::IndexOf($enableNames, 'Set-Service:WinDefend')
+  $enableNis = [array]::IndexOf($enableNames, 'Set-Service:WdNisSvc')
+  Assert-True ($enableWin -ge 0 -and $enableNis -gt $enableWin) 'WinDefend was not restored before WdNisSvc'
+  $winEnable = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WinDefend' })
+  Assert-True ($winEnable[0].startupType -eq 'Automatic' -and $winEnable[0].status -eq 'Running') 'WinDefend was not restored'
+  $nisEnable = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WdNisSvc' })
+  Assert-True ($nisEnable[0].startupType -eq 'Automatic' -and $nisEnable[0].status -eq 'Running') 'WdNisSvc start mode was not mapped'
   $enableCalls = @($global:MasterTestCalls | Where-Object { $_.arguments -eq '/E' -and $_.exe -match 'Wub_x64.exe' })
   Assert-True ($enableCalls.Count -eq 1) 'Wub /E was not the undo command'
   $global:MasterTestCalls.Clear()
-  $reapply = Invoke-SecurityUndo -Brand 'mercedes' -Action 'reapply' -InstallerData $data -RepoRoot $fixture -LogDirectory $logs -Arch 'x86' -ToolRunner $runner -StateReader $stateReader
+  $defenderCount = $global:MasterDefenderCommands.Count
+  $reapply = Invoke-SecurityUndo -Brand 'mercedes' -Action 'reapply' -InstallerData $data -RepoRoot $fixture -LogDirectory $logs -Arch 'x86' -ToolRunner $runner -StateReader $stateReader -DefenderReader $defenderReader -DefenderSink $defenderSink -TamperPrompt $prompt
   Assert-True ($reapply.windowsUpdate -eq 'disabled') 'reapply did not request disable'
+  Assert-True ($reapply.defender -eq 'not-run') 'reapply changed Defender'
+  Assert-True ($global:MasterDefenderCommands.Count -eq $defenderCount) 'reapply issued Defender commands'
   $reapplyCalls = @($global:MasterTestCalls | Where-Object { $_.exe -match 'Wub.exe$' -and $_.arguments -eq '/D /P' })
   Assert-True ($reapplyCalls.Count -eq 1) '32-bit reapply did not use Wub.exe /D /P'
 
@@ -359,15 +431,12 @@ try {
   $wub32 = Select-WubExecutable (Get-SecurityManifest $tools 'wub') 'x86'
   Assert-True ($wub64.EndsWith('Wub_x64.exe')) '64-bit tool was not selected'
   Assert-True ($wub32.EndsWith('Wub.exe')) '32-bit tool was not selected'
-  $defenderManifest = Read-JsonFile (Join-Path $tools 'dcontrol/tool-manifest.json')
-  Assert-True ($defenderManifest.status -eq 'blocked-cli-unverified') 'Defender slot is not blocked'
-  Assert-True (-not $defenderManifest.cliVerifiedOnWindows) 'Defender CLI is marked verified'
-  $defenderArgs = @($defenderManifest.disableArgs | Where-Object { $_ })
-  Assert-True ($defenderArgs.Count -eq 0) 'Defender disable arguments are pinned'
-  $global:MasterTestCalls.Clear()
-  $blocked = Invoke-DefenderDisable -ToolsRoot $tools -LogDirectory $logs -ToolRunner $runner -TamperPrompt $prompt
-  Assert-True ($blocked.status -eq 'blocked-cli-unverified') 'shipped Defender slot ran'
-  Assert-True ($global:MasterTestCalls.Count -eq 0) 'a tool started for the blocked Defender slot'
+  Assert-True (-not (Test-Path (Join-Path $tools 'dcontrol/dControl.exe'))) 'the old Defender Control binary is still shipped'
+  Assert-True (-not (Test-Path (Join-Path $tools 'dcontrol/dControl.ini'))) 'the old Defender Control sidecar is still shipped'
+  Assert-True (-not (Test-Path (Join-Path $tools 'dcontrol/tool-manifest.json'))) 'the old Defender Control manifest is still shipped'
+  Assert-True (Test-Path (Join-Path $tools 'dcontrol/ReadMe.txt')) 'vendor readme reference was removed'
+  Assert-True (Test-Path (Join-Path $tools 'dcontrol/STATUS.md')) 'Defender reference status was removed'
+  Assert-Throws { Invoke-DefenderLiveCommand ([pscustomobject]@{ kind = 'Set-MpPreference'; name = 'DisableRealtimeMonitoring'; value = $true }) } 'forbidden'
 
   $flip = Join-Path $temp 'flip-tools'
   New-Item -ItemType Directory -Force -Path (Join-Path $flip 'wub') | Out-Null
@@ -380,41 +449,82 @@ try {
   Assert-Throws { Invoke-WindowsUpdateTool -ToolsRoot $flip -Action 'disable' -LogDirectory $logs -Arch 'x64' -ToolRunner $runner -StateReader $stateReader } 'hash mismatch'
   Assert-True ($global:MasterTestCalls.Count -eq 0) 'tampered WUB was executed'
 
-  $fakeRoot = Join-Path $temp 'fake-tools'
-  $fakeDir = Join-Path $fakeRoot 'dcontrol'
-  New-Item -ItemType Directory -Force -Path $fakeDir | Out-Null
-  $fakeBytes = [Text.Encoding]::UTF8.GetBytes('not-a-real-tool')
-  [System.IO.File]::WriteAllBytes((Join-Path $fakeDir 'fake-tool.exe'), $fakeBytes)
-  $fakeManifest = [ordered]@{
-    schema = 'diagnostic-workstation.approved-tool/v1'
-    tool = 'dcontrol'
-    status = 'wired'
-    cliVerifiedOnWindows = $true
-    disableArgs = @('-from-manifest')
-    enableArgs = @('-enable-from-manifest')
-    binaries = @([ordered]@{ name = 'fake-tool.exe'; sha256 = (Get-BytesSha256 $fakeBytes); bytes = $fakeBytes.Length })
-    sidecars = @()
-    blockedReason = 'test'
-  }
-  Write-Utf8NoBom (Join-Path $fakeDir 'tool-manifest.json') (($fakeManifest | ConvertTo-Json -Depth 6) + "`n")
-  $global:MasterTestCalls.Clear()
+  $defenderLogs = Join-Path $temp 'defender-direct-logs'
+  New-Item -ItemType Directory -Force -Path $defenderLogs | Out-Null
+  $directSnap = Join-Path $temp 'defender-direct.json'
+  $directCommands = New-Object System.Collections.Generic.List[object]
+  $directSink = { param($Command) $directCommands.Add($Command) }
   $tamperReads = @{ n = 0 }
-  $stillOn = Invoke-DefenderDisable -ToolsRoot $fakeRoot -LogDirectory $logs -ToolRunner $runner -TamperReader {
-    $tamperReads.n++
-    return @{ tamper = 'on'; realtime = 'true' }
-  } -TamperPrompt { param($Message) return $true }
-  Assert-True ($stillOn.status -eq 'tamper-blocked') 'Tamper Protection did not block Defender'
-  Assert-True ($global:MasterTestCalls.Count -eq 0) 'Defender tool ran while Tamper Protection stayed on'
-  $global:MasterTestCalls.Clear()
+  $declined = Invoke-DefenderControl -Action 'disable' -LogDirectory $defenderLogs -SnapshotPath $directSnap -ReadState {
+    return (New-TestDefenderState 'on')
+  } -CommandSink $directSink -TamperPrompt { param($Message) return $false }
+  Assert-True ($declined.status -eq 'tamper-blocked') 'declined Tamper Protection prompt did not block Defender'
+  Assert-True ($directCommands.Count -eq 0) 'Defender changed while Tamper Protection stayed on'
+  Assert-True (-not (Test-Path $directSnap)) 'a declined prompt wrote a Defender snapshot'
   $tamperReads.n = 0
-  $turnedOff = Invoke-DefenderDisable -ToolsRoot $fakeRoot -LogDirectory $logs -ToolRunner $runner -TamperReader {
+  $stillOn = Invoke-DefenderControl -Action 'disable' -LogDirectory $defenderLogs -SnapshotPath $directSnap -ReadState {
     $tamperReads.n++
-    if ($tamperReads.n -eq 1) { return @{ tamper = 'on' } }
-    return @{ tamper = 'off' }
+    return (New-TestDefenderState 'on')
+  } -CommandSink $directSink -TamperPrompt { param($Message) return $true }
+  Assert-True ($stillOn.status -eq 'tamper-blocked') 'Tamper Protection that stayed on did not block Defender'
+  Assert-True ($directCommands.Count -eq 0) 'Defender changed after Tamper Protection stayed on'
+  $directCommands.Clear()
+  $tamperReads.n = 0
+  $turnedOff = Invoke-DefenderControl -Action 'disable' -LogDirectory $defenderLogs -SnapshotPath $directSnap -ReadState {
+    $tamperReads.n++
+    if ($tamperReads.n -eq 1) { return (New-TestDefenderState 'on') }
+    return (New-TestDefenderState 'off')
+  } -CommandSink $directSink -TamperPrompt { param($Message) return $true }
+  Assert-True ($turnedOff.status -eq 'disabled') 'Defender did not disable after Tamper Protection was turned off'
+  $afterPrompt = @($directCommands | Where-Object { $_.kind -eq 'Set-MpPreference' -and $_.name -eq 'DisableRealtimeMonitoring' })
+  Assert-True ($afterPrompt.Count -eq 1 -and [string]$afterPrompt[0].value -eq 'True') 'realtime monitoring was not disabled after the prompt'
+  $unknownPrompt = @{ ran = $false }
+  $unknown = Invoke-DefenderControl -Action 'disable' -LogDirectory $defenderLogs -SnapshotPath (Join-Path $temp 'defender-unknown.json') -ReadState {
+    return (New-TestDefenderState 'unknown')
+  } -CommandSink { param($Command) } -TamperPrompt { param($Message) $unknownPrompt.ran = $true; return $true }
+  Assert-True ($unknown.status -eq 'disabled') 'unknown Tamper Protection state did not continue'
+  Assert-True (-not $unknownPrompt.ran) 'unknown Tamper Protection state prompted'
+  $lateAttempts = @{ n = 0 }
+  $latePrompt = @{ ran = $false }
+  $late = Invoke-DefenderControl -Action 'disable' -LogDirectory $defenderLogs -SnapshotPath (Join-Path $temp 'defender-late.json') -ReadState {
+    return (New-TestDefenderState 'off')
+  } -CommandSink {
+    param($Command)
+    if ($Command.kind -eq 'Set-MpPreference' -and $Command.name -eq 'DisableRealtimeMonitoring' -and $lateAttempts.n -eq 0) {
+      $lateAttempts.n++
+      throw 'This operation is not allowed because Tamper Protection is enabled'
+    }
+  } -TamperPrompt { param($Message) $latePrompt.ran = $true; return $true }
+  Assert-True ($late.status -eq 'disabled') 'a Tamper Protection command error did not retry'
+  Assert-True ($latePrompt.ran) 'a Tamper Protection command error did not prompt'
+  Assert-True ($lateAttempts.n -eq 1) 'the Tamper Protection retry did not run'
+  $noSnap = Join-Path $temp 'defender-missing.json'
+  $defaultCommands = New-Object System.Collections.Generic.List[object]
+  $defaulted = Invoke-DefenderControl -Action 'enable' -LogDirectory $defenderLogs -SnapshotPath $noSnap -ReadState {
+    return [pscustomobject]@{
+      tamper = 'off'
+      preferences = @{ DisableRealtimeMonitoring = $true; MAPSReporting = 0 }
+      policies = @()
+      services = @([pscustomobject]@{ name = 'WinDefend'; present = $true; status = 'Stopped'; startMode = 'Disabled' })
+    }
+  } -CommandSink { param($Command) $defaultCommands.Add($Command) } -TamperPrompt { param($Message) return $false }
+  Assert-True ($defaulted.status -eq 'enabled') 'enable without a snapshot failed'
+  $defaultRealtime = @($defaultCommands | Where-Object { $_.name -eq 'DisableRealtimeMonitoring' })
+  Assert-True ([string]$defaultRealtime[0].value -eq 'False') 'missing snapshot did not restore realtime monitoring'
+  $defaultMaps = @($defaultCommands | Where-Object { $_.name -eq 'MAPSReporting' })
+  Assert-True ([string]$defaultMaps[0].value -eq '2') 'missing snapshot did not restore MAPSReporting'
+  $defaultWin = @($defaultCommands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WinDefend' })
+  Assert-True ($defaultWin[0].startupType -eq 'Automatic' -and $defaultWin[0].status -eq 'Running') 'missing snapshot did not restore WinDefend'
+  $rollback = New-Object System.Collections.Generic.List[object]
+  $failed = Invoke-DefenderControl -Action 'disable' -LogDirectory $defenderLogs -SnapshotPath (Join-Path $temp 'defender-fail.json') -ReadState {
+    return (New-TestDefenderState 'off')
+  } -CommandSink {
+    param($Command)
+    $rollback.Add($Command)
+    if ($Command.kind -eq 'Set-MpPreference' -and $Command.name -eq 'DisableEmailScanning' -and [string]$Command.value -eq 'True') { throw 'access denied' }
   } -TamperPrompt { param($Message) return $true }
-  Assert-True ($turnedOff.status -eq 'disabled') 'verified manifest did not run after Tamper Protection was off'
-  Assert-True ($global:MasterTestCalls[0].arguments -eq '-from-manifest') 'verified Defender path did not use manifest arguments'
-  Assert-True ($global:MasterTestCalls[0].exe -match 'fake-tool.exe') 'verified path started a different executable'
+  Assert-True ($failed.status -eq 'failed') 'a Defender apply error was ignored'
+  Assert-True (@($rollback | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -ge 1) 'failed disable did not roll back policy'
 
   $signed = Join-Path $temp 'signed-repo'
   New-Item -ItemType Directory -Force -Path (Join-Path $signed 'catalog'), (Join-Path $signed 'keys') | Out-Null
@@ -432,7 +542,7 @@ try {
     Read-ApprovedCatalog (Join-Path $fixture 'catalog/catalog.json') (Join-Path $fixture 'catalog/catalog.sha256') (Join-Path $fixture 'keys') (Join-Path $fixture 'catalog/catalog.json.release.sig') (Join-Path $trustRepo 'trust-state.json')
   } 'older than the last accepted catalog'
 
-  Assert-Throws { & (Join-Path $repo 'installer/Master/Probe-DefenderControlCli.ps1') } 'Refusing to start dControl'
+  Assert-True (-not (Test-Path (Join-Path $repo 'installer/Master/Probe-DefenderControlCli.ps1'))) 'the Defender Control probe is still present'
   Write-Output 'Master installer checks passed.'
 } catch {
   Write-Output $_.Exception.Message

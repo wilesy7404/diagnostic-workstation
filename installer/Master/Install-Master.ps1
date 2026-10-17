@@ -1,6 +1,6 @@
-# Install one approved brand bundle, then disable Windows Update with Windows Update Blocker.
-# Windows Defender is recorded as blocked until Defender Control has a verified silent command line.
-# This script does not change Winlogon, the shell, or Run startup, and it does not open dControl.
+# Install one approved brand bundle, then disable Windows Update and Windows Defender.
+# Defender uses documented Set-MpPreference, policy, and service changes. No extra window is opened.
+# This script does not change Winlogon, the shell, or Run startup.
 # Windows PowerShell 5.1. Run it elevated on a throwaway Windows VM, not on a live shop PC.
 [CmdletBinding()]
 param(
@@ -21,6 +21,7 @@ $masterDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $masterDir 'lib/Common.ps1')
 . (Join-Path $masterDir 'lib/Catalog.ps1')
 . (Join-Path $masterDir 'lib/Bundle.ps1')
+. (Join-Path $masterDir 'lib/Defender.ps1')
 . (Join-Path $masterDir 'lib/Security.ps1')
 . (Join-Path $masterDir 'lib/Install.ps1')
 
@@ -44,8 +45,12 @@ if ([string]$result.windowsUpdate -ne 'disabled') {
   Write-Output 'Windows Update was not disabled. The brand files were left in place. Shell startup was not changed.'
   exit 2
 }
-if ([string]$result.defender -eq 'blocked-cli-unverified') {
-  Write-Output 'DEFENDER BLOCKED: Defender Control v2.1 has no verified silent command line. Defender was not changed. No dControl window was opened.'
+if ([string]$result.defender -eq 'tamper-blocked') {
+  Write-Output 'Tamper Protection stayed on. Windows Defender was not changed. Turn it off in Windows Security, then run this installer again.'
   exit 10
+}
+if ([string]$result.defender -ne 'disabled') {
+  Write-Output 'Windows Defender was not disabled. The brand files were left in place. Shell startup was not changed.'
+  exit 11
 }
 exit 0

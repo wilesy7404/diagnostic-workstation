@@ -193,7 +193,9 @@ function Install-ApprovedBrand {
     [scriptblock]$ToolRunner,
     [scriptblock]$StateReader,
     [scriptblock]$TamperReader,
-    [scriptblock]$TamperPrompt
+    [scriptblock]$TamperPrompt,
+    [scriptblock]$DefenderReader,
+    [scriptblock]$DefenderSink
   )
   $allow = Get-BrandAllowEntry $Brand
   if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Find-MasterRepoRoot $PSScriptRoot }
@@ -259,7 +261,7 @@ function Install-ApprovedBrand {
     $security = [pscustomobject]@{ windowsUpdate = 'not-run'; defender = 'not-run'; tamper = 'not-checked' }
     if ($ApplySecurity) {
       try {
-        $security = Invoke-AutomaticSecurity -Brand $Brand -InstallerData $InstallerData -LogDirectory $LogDirectory -RepoRoot $RepoRoot -Arch $Arch -ToolRunner $ToolRunner -StateReader $StateReader -TamperReader $TamperReader -TamperPrompt $TamperPrompt
+        $security = Invoke-AutomaticSecurity -Brand $Brand -InstallerData $InstallerData -LogDirectory $LogDirectory -RepoRoot $RepoRoot -Arch $Arch -ToolRunner $ToolRunner -StateReader $StateReader -TamperReader $TamperReader -TamperPrompt $TamperPrompt -DefenderReader $DefenderReader -DefenderSink $DefenderSink
       } catch {
         Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'security-failed'; brand = $Brand; message = $_.Exception.Message })
         $security = [pscustomobject]@{ windowsUpdate = 'failed'; defender = 'failed'; tamper = 'unknown' }

@@ -41,21 +41,85 @@ Windows Update uses the vendored Sordum Windows Update Blocker, hidden and eleva
 - 32-bit: `Wub.exe /D /P`
 - Undo: the same exe with `/E`
 
-`/D /P` is a full service stop, not a pause. The hashes are in `tools/security/wub/tool-manifest.json`. See `tools/security/wub/ATTRIBUTION.md`. Windows Feature Updates can turn updates back on. The Start Menu entry **Re-apply Windows Update block** runs `/D /P` again. **Re-enable Windows Update and Defender** runs `/E`.
+`/D /P` is a full service stop, not a pause. The hashes are in `tools/security/wub/tool-manifest.json`. See `tools/security/wub/ATTRIBUTION.md`. Windows Feature Updates can turn updates back on. The Start Menu entry **Re-apply Windows Update block** runs `/D /P` again and does not change Defender. **Re-enable Windows Update and Defender** runs `/E` and restores Defender.
 
-The Start Menu uninstall entry re-enables Windows Update and deletes those shortcuts. It leaves the brand files in place and does not change shell startup.
+The Start Menu uninstall entry re-enables Windows Update and Defender, then deletes those shortcuts. It leaves the brand files in place and does not change shell startup.
 
-Every security action is logged with the tool hash, arguments, exit code, and service state before and after, under `%LOCALAPPDATA%\DiagnosticWorkstation-Installer\logs\install-journal.log`.
+Every security action is logged under `%LOCALAPPDATA%\DiagnosticWorkstation-Installer\logs\install-journal.log`.
 
-## Defender is blocked
+## Windows Defender
 
-Defender Control v2.1 is vendored under `tools/security/dcontrol/` and its SHA-256 is pinned. The bundled `ReadMe.txt` says v2.0 (13 Sep 2021) removed command-line parameters. The installer does not start `dControl.exe`, does not pass `/D` `/E` `/G`, and does not open the GUI. It does not call `Set-MpPreference` or any other Defender API.
+Defender disable runs in the same elevated installer process, after the brand install and the Windows Update step. There is no confirm screen and no extra window. The old Defender Control binary is not shipped and is not started. `tools/security/dcontrol/ReadMe.txt` is a vendor changelog kept for reference.
 
-Tamper Protection is read from `HKLM\SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection` and `Get-MpComputerStatus`. The prompt to turn it off in Windows Security is used only when a future verified silent Defender command is about to run. While this slot is blocked, the installer records the block and continues. Exit code 10 means the brand install finished, Windows Update was disabled, and Defender was not changed.
+`installer/Master/lib/Defender.ps1` is the implementation.
+
+### Set-MpPreference
+
+Disable writes the first value. Undo writes the captured pre-change value. When the snapshot has no value, undo writes the default in the second column.
+
+| Setting | Disable | Undo default |
+| --- | --- | --- |
+| DisableRealtimeMonitoring | `$true` | `$false` |
+| DisableBehaviorMonitoring | `$true` | `$false` |
+| DisableIOAVProtection | `$true` | `$false` |
+| DisableScriptScanning | `$true` | `$false` |
+| DisableBlockAtFirstSeen | `$true` | `$false` |
+| DisableIntrusionPreventionSystem | `$true` | `$false` |
+| DisableEmailScanning | `$true` | `$false` |
+| DisableRemovableDriveScanning | `$true` | `$false` |
+| DisableScanningMappedNetworkDrivesForFullScan | `$true` | `$false` |
+| DisableArchiveScanning | `$true` | `$false` |
+| PUAProtection | `0` | `1` |
+| MAPSReporting | `0` | `2` |
+| SubmitSamplesConsent | `2` | `1` |
+
+On-access protection is the policy value below. `Set-MpPreference` has no `DisableOnAccessProtection` parameter.
+
+### Policy values
+
+Disable creates each DWORD and sets it to `1`. Undo deletes the value when the pre-change snapshot did not have it, and otherwise restores the captured DWORD. With no snapshot, undo deletes all of these values.
+
+`HKLM\SOFTWARE\Policies\Microsoft\Windows Defender`
+
+- `DisableAntiSpyware`
+- `DisableAntiVirus`
+
+`HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection`
+
+- `DisableRealtimeMonitoring`
+- `DisableBehaviorMonitoring`
+- `DisableOnAccessProtection`
+- `DisableScanOnRealtimeEnable`
+- `DisableIOAVProtection`
+- `DisableScriptScanning`
+
+### Services
+
+`WinDefend`, `WdNisSvc`, and `MDCoreSvc` only. Boot drivers (`WdBoot`, `WdFilter`, `WdNisDrv`) and `SecurityHealthService` are not changed. A service that is not installed is skipped.
+
+Disable sets `StartupType` to `Disabled` and stops the service, dependents first (`MDCoreSvc`, then `WdNisSvc`, then `WinDefend`). Undo restores the captured start mode (`Auto` is stored as `Automatic`) and the captured Running or Stopped state, parent first. With no snapshot, a service that exists is set back to Automatic and Running.
+
+The pre-change snapshot is `%LOCALAPPDATA%\DiagnosticWorkstation-Installer\defender-pre-state.json` (`diagnostic-workstation.defender-snapshot/v1`). It is written before any Defender change. The journal steps are `defender-pre` and `defender-post`. Each one includes the `Get-MpPreference` values, the `Get-MpComputerStatus` fields the module reads, Tamper Protection, the policy values, and the service state.
+
+### Tamper Protection
+
+Before any change, the module reads `HKLM\SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection` and `Get-MpComputerStatus` (`IsTamperProtected`). It prompts only when Tamper Protection is on, or when a later Defender command fails with a Tamper Protection error and the user was not already prompted. The prompt asks the user to turn it off in Windows Security, then the module reads the state again. If it is still on, nothing is left changed: a disable that already wrote settings is rolled back from the snapshot, and the status is `tamper-blocked`. An unknown Tamper Protection state does not prompt.
+
+Exit codes from `Install-Master.ps1` after the brand files are in place:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Windows Update and Defender are both disabled |
+| 2 | Windows Update was not disabled |
+| 10 | Tamper Protection stayed on, so Defender was not changed |
+| 11 | Defender disable failed |
+
+`Enable-Security.ps1 -Action enable` and `Uninstall-MasterBrand.ps1` use exit 10 and 11 for the Defender undo. `-Action reapply` does not call the Defender module.
 
 ## Windows VM check before merge
 
 1. Run `pwsh -NoProfile -File scripts/Test-MasterInstaller.ps1`. It must not be elevated into a shop profile.
-2. On a throwaway VM, run `Wub_x64.exe /?` elevated and confirm `/D`, `/E`, and `/P` before trusting a live disable.
-3. Optional and manual: `installer/Master/Probe-DefenderControlCli.ps1 -IUnderstandThisMayOpenAWindow`. It passes only `/?` and may open a window. It does not mark Defender verified.
-4. Confirm the install did not change Winlogon or the shell.
+2. On a throwaway VM, run `Wub_x64.exe /?` elevated and confirm `/D`, `/E`, and `/P` before trusting a live disable. This environment has not executed that binary.
+3. On a throwaway VM, run the installer and confirm Defender realtime protection, the policy values, and `WinDefend` actually change, then run **Re-enable Windows Update and Defender** and confirm every setting, policy value, and service returns to the captured state.
+4. On a throwaway VM with Tamper Protection on, confirm the installer prompts once, changes nothing while it stays on, and continues only after it is turned off.
+5. Confirm the install did not change Winlogon or the shell, and did not start the old Defender Control program.
