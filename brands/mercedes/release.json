@@ -1,0 +1,17 @@
+{
+  "schema": "diagnostic-workstation.brand-release/v1",
+  "brand": "mercedes",
+  "repo": "wilesy7404/diagnostic-workstation",
+  "tagPrefix": "mercedes-v",
+  "retiredTagPrefixes": ["universal-v", "v"],
+  "channel": "beta",
+  "asset": "workstation.zip",
+  "manifestAsset": "update-manifest.json",
+  "install": {
+    "root": "DiagnosticWorkstation",
+    "rootBase": "LOCALAPPDATA"
+  },
+  "packageSha256": null,
+  "approvedTag": null,
+  "note": "Approved ZIP hashes live only in catalog/catalog.json. This file does not embed a runtime. universal-v tags are retired."
+}

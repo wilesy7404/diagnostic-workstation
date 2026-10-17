@@ -1,0 +1,7 @@
+{
+  "keyId": "release-2026",
+  "algorithm": "ed25519",
+  "status": "placeholder",
+  "publicKeyHex": null,
+  "note": "Placeholder only. Real release key custody is not in this repository. The installer rejects catalogs that claim a real signature while this key is a placeholder."
+}

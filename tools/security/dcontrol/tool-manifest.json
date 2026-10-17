@@ -1,0 +1,35 @@
+{
+  "schema": "diagnostic-workstation.approved-tool/v1",
+  "tool": "dcontrol",
+  "publisher": "Sordum",
+  "product": "Defender Control",
+  "version": "2.1",
+  "status": "blocked-cli-unverified",
+  "requiresElevation": true,
+  "requiresTamperOff": true,
+  "cliVerifiedOnWindows": false,
+  "disableArgs": [],
+  "enableArgs": [],
+  "detectArgs": [],
+  "blockedReason": "The ReadMe.txt shipped with this Defender Control v2.1 binary says v2.0 (13 Sep 2021) removed command-line parameter support. The installer does not start dControl.exe, does not pass /D /E /G, and does not open the GUI. No other Defender disable method is implemented.",
+  "binaries": [
+    {
+      "name": "dControl.exe",
+      "arch": "x86",
+      "sha256": "1ef6c1a4dfdc39b63bfe650ca81ab89510de6c0d3d7c608ac5be80033e559326",
+      "bytes": 457984
+    }
+  ],
+  "sidecars": [
+    {
+      "name": "dControl.ini",
+      "sha256": "8e9a84da243905685ca77b6ef71841e610b88b7963d4de59f6dcbdd1621ecacd",
+      "bytes": 87896
+    },
+    {
+      "name": "ReadMe.txt",
+      "sha256": "d3b0219253a58ccb394559751299bd16dba1120e02cb11571c3b6a085b1027f8",
+      "bytes": 2726
+    }
+  ]
+}

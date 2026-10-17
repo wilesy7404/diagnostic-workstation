@@ -18,7 +18,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Retired generic publisher
+        shell: bash
+        run: |
+          echo "This generic v* workstation.zip publisher is retired."
+          echo "It packaged one shared runtime. The master installer installs mercedes-v* and bmw-v* bundles instead."
+          echo "No release was created."
+          exit 1
       - name: Validate and package workstation
+        if: false
         env:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
@@ -41,6 +49,7 @@ jobs:
           SHA=$(sha256sum workstation.zip | cut -d' ' -f1)
           printf '{"schemaVersion":1,"version":"%s","channel":"%s","asset":"workstation.zip","sha256":"%s"}\n' "$VERSION" "$CHANNEL" "$SHA" > update-manifest.json
       - name: Publish GitHub Release
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}

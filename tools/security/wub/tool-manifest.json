@@ -1,0 +1,41 @@
+{
+  "schema": "diagnostic-workstation.approved-tool/v1",
+  "tool": "wub",
+  "publisher": "Sordum",
+  "product": "Windows Update Blocker",
+  "status": "wired",
+  "requiresElevation": true,
+  "requiresTamperOff": false,
+  "resetByFeatureUpdate": true,
+  "cliVerifiedOnWindows": false,
+  "cliSource": "Published Sordum command line: /D /P disables and protects the Windows Update services (full stop, not pause); /E enables them again. Prefer Wub_x64.exe on 64-bit Windows. The bundled upstream README documents the GUI only. This repository did not execute Wub_x64.exe /? ; confirm those flags on a throwaway Windows VM before merge.",
+  "binaries": [
+    {
+      "name": "Wub_x64.exe",
+      "arch": "x64",
+      "sha256": "187eeee9e518011de1b87cfb0ed03e12ea551e9011f0c8defdd0e4535e672da2",
+      "bytes": 961600
+    },
+    {
+      "name": "Wub.exe",
+      "arch": "x86",
+      "sha256": "aac1123f17f8569a36bf93876cea30e15103fd2379b401a79129a2a6e7285ac2",
+      "bytes": 810000
+    }
+  ],
+  "sidecars": [
+    {
+      "name": "Wub.ini",
+      "sha256": "2caffc00b46654c1a3a3f7abeda8f56e1a99bc645ce552f3d195e5e20552a4ab",
+      "bytes": 102130
+    },
+    {
+      "name": "UPSTREAM-README.md",
+      "sha256": "24721127d8ca5a150965494ded512d0563a073e29f823c16e29a8d06e879170c",
+      "bytes": 1431
+    }
+  ],
+  "disableArgs": ["/D", "/P"],
+  "enableArgs": ["/E"],
+  "detectArgs": []
+}

@@ -44,3 +44,22 @@ jobs:
             }
           }
           Write-Host 'Source checks passed. Runtime/UI testing still required.'
+
+  master-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PowerShell
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/pwsh.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.4.12/powershell-7.4.12-linux-x64.tar.gz
+          mkdir -p "$RUNNER_TEMP/pwsh"
+          tar -xzf /tmp/pwsh.tar.gz -C "$RUNNER_TEMP/pwsh"
+          chmod +x "$RUNNER_TEMP/pwsh/pwsh"
+          echo "$RUNNER_TEMP/pwsh" >> "$GITHUB_PATH"
+      - name: Test master installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          pwsh -NoProfile -File scripts/Test-MasterInstaller.ps1

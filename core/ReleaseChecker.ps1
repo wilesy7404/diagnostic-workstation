@@ -1,5 +1,7 @@
 # Diagnostic Workstation public GitHub release checker
 # Windows PowerShell 5.1 | check only, no code execution or installation.
+# The master installer does not use this generic ^v? filter. Approved tags are mercedes-v* and bmw-v*.
+# universal-v* and bare v* tags are retired.
 param(
  [ValidateSet('stable','beta')][string]$Channel='beta',
  [string]$Repo='wilesy7404/diagnostic-workstation',
