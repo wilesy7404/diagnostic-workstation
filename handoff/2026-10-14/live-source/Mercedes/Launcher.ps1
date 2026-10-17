@@ -14,6 +14,7 @@ $root=Split-Path -Parent $MyInvocation.MyCommand.Path
 $config=Join-Path $root 'apps.json'
 $brandProfile=Get-Content -LiteralPath (Join-Path $root 'profile.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $script:brandName=[string]$brandProfile.displayName
+ $script:boldCardDescription = ($brandProfile.boldCardDescription -eq $true)
 $brandShort=[string]$brandProfile.short
 $accent=if($brandProfile.accent){[string]$brandProfile.accent}else{'#45ADFF'}
 $accentSoft=if($brandProfile.accentSoft){[string]$brandProfile.accentSoft}else{'#9FD7FF'}
@@ -37,6 +38,13 @@ function Load-Apps {
 }
 function Save-Apps {
  @{apps=@($script:apps)} | ConvertTo-Json -Depth 9 | Set-Content $config -Encoding UTF8
+}
+function Save-Profile {
+ $p = Get-Content -LiteralPath (Join-Path $root 'profile.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+ if ($p.PSObject.Properties.Name -contains 'boldCardDescription') { $p.boldCardDescription = [bool]$script:boldCardDescription }
+ else { $p | Add-Member -NotePropertyName boldCardDescription -NotePropertyValue ([bool]$script:boldCardDescription) }
+ $utf8Bom = New-Object System.Text.UTF8Encoding $true
+ [System.IO.File]::WriteAllText((Join-Path $root 'profile.json'), ($p | ConvertTo-Json -Depth 6), $utf8Bom)
 }
 function Brush($value){New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.ColorConverter]::ConvertFromString($value))}
 function Image-Source($path) {
@@ -73,16 +81,16 @@ $windowXaml=@'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="UNIVERSAL_HOME_TITLE" WindowStyle="None" WindowState="Maximized" ResizeMode="NoResize" ShowInTaskbar="True" Background="#080D14" FontFamily="Segoe UI">
  <Window.Resources>
   <Style x:Key="Tile" TargetType="Button">
-   <Setter Property="Background" Value="#E51A2637"/><Setter Property="BorderBrush" Value="THEME_ACCENT_SOFT"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Margin" Value="11"/><Setter Property="Padding" Value="17"/>
-   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="19" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/></Border><ControlTemplate.Triggers>
-     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="surface" Property="Background" Value="#F020344C"/><Setter TargetName="surface" Property="BorderBrush" Value="THEME_ACCENT_SOFT"/></Trigger>
-     <Trigger Property="IsPressed" Value="True"><Setter TargetName="surface" Property="Background" Value="#F0284C73"/></Trigger>
+   <Setter Property="Background" Value="#900A1018"/><Setter Property="BorderBrush" Value="#88BBC7D0"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Margin" Value="12"/><Setter Property="Padding" Value="0"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="24" ClipToBounds="True" Padding="{TemplateBinding Padding}"><Border.Effect><DropShadowEffect BlurRadius="28" ShadowDepth="3" Opacity="0.34" Color="#000000"/></Border.Effect><ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/></Border><ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="surface" Property="Background" Value="#900A1018"/><Setter TargetName="surface" Property="BorderBrush" Value="#88BBC7D0"/></Trigger>
+     <Trigger Property="IsPressed" Value="True"><Setter TargetName="surface" Property="Background" Value="#B028323F"/><Setter TargetName="surface" Property="BorderBrush" Value="#C0C6CE"/><Setter TargetName="surface" Property="BorderThickness" Value="1"/></Trigger>
    </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Ghost" TargetType="Button"><Setter Property="Background" Value="#D7111E2D"/><Setter Property="BorderBrush" Value="#75809DB9"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Foreground" Value="#E7F2FF"/><Setter Property="Padding" Value="16,9"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
   <Style x:Key="FooterButton" TargetType="Button">
    <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="12,6"/><Setter Property="Cursor" Value="Hand"/>
-   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="bg" CornerRadius="14" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bg" Property="Background" Value="#385A86B5"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="bg" Property="Background" Value="#5D7C9ABB"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="bg" CornerRadius="20" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bg" Property="Background" Value="#385A86B5"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="bg" Property="Background" Value="#5D7C9ABB"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
  </Window.Resources>
  <Grid x:Name="Canvas">
@@ -180,90 +188,64 @@ function Apply-Wallpaper {
 function Make-Card($app){
  $btn=New-Object System.Windows.Controls.Button
  $btn.Style=$window.FindResource('Tile')
- $btn.Width=326
- $btn.Height=132
- $btn.Margin='12,10,12,10'
+ $btn.Width=214
+ $btn.Height=184
+ $btn.Margin='14,12,14,12'
  $btn.Padding='0'
  $btn.Tag=[string]$app.name
+ $script:cardCorner=24
 
- $content=New-Object System.Windows.Controls.Grid
- $content.Margin='15,12,15,12'
- $content.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition)) | Out-Null
- $leftCol=$content.ColumnDefinitions[0]
- $leftCol.Width=New-Object System.Windows.GridLength(88)
- $rightCol=New-Object System.Windows.Controls.ColumnDefinition
- $rightCol.Width=New-Object System.Windows.GridLength(1,[System.Windows.GridUnitType]::Star)
- [void]$content.ColumnDefinitions.Add($rightCol)
-
- $iconPanel=New-Object System.Windows.Controls.Border
- $iconPanel.Width=76;$iconPanel.Height=76
- $iconPanel.CornerRadius=New-Object System.Windows.CornerRadius(15)
- $iconPanel.Background=Brush '#EC070D17'
- $iconPanel.BorderBrush=Brush '#5771A7C7'
- $iconPanel.BorderThickness=New-Object System.Windows.Thickness(1)
- $iconPanel.VerticalAlignment='Center';$iconPanel.HorizontalAlignment='Left'
-
- $icon=Image-Source ([string]$app.icon)
- if(-not $icon){$icon=Image-Source ([string]$app.path)}
- if($icon){
-  $picture=New-Object System.Windows.Controls.Image
-  $picture.Source=$icon;$picture.Stretch='Uniform'
-  [Windows.Media.RenderOptions]::SetBitmapScalingMode($picture,[Windows.Media.BitmapScalingMode]::HighQuality)
-  $picture.SnapsToDevicePixels=$true
-  $picture.Width=68;$picture.Height=68
-  if($icon.PixelWidth -lt 64 -or $icon.PixelHeight -lt 64){$picture.Width=[Math]::Min(48,$icon.PixelWidth);$picture.Height=[Math]::Min(48,$icon.PixelHeight)}
-  $picture.HorizontalAlignment='Center';$picture.VerticalAlignment='Center'
-  $iconPanel.Child=$picture
- } else {
-  $glyph=New-Object System.Windows.Controls.TextBlock
-  $glyph.Text=if($app.symbol){[string]$app.symbol}else{[string]$app.name.Substring(0,[Math]::Min(2,$app.name.Length))}
-  $glyph.Foreground=Brush '#E4F0FF';$glyph.FontWeight='SemiBold';$glyph.FontSize=28
-  $glyph.HorizontalAlignment='Center';$glyph.VerticalAlignment='Center'
-  $iconPanel.Child=$glyph
+ $applyRoundClip = {
+  param($el)
+  if(-not $el){return}
+  $w=[double]$el.ActualWidth; $h=[double]$el.ActualHeight
+  if($w -le 0 -or $h -le 0){return}
+  $r=[double]$script:cardCorner
+  $el.Clip = New-Object System.Windows.Media.RectangleGeometry (New-Object System.Windows.Rect(0,0,$w,$h)), $r, $r
  }
- [System.Windows.Controls.Grid]::SetColumn($iconPanel,0)
- [void]$content.Children.Add($iconPanel)
+ $btn.Add_Loaded({ param($s,$e) & $applyRoundClip $s }.GetNewClosure())
+ $btn.Add_SizeChanged({ param($s,$e) & $applyRoundClip $s }.GetNewClosure())
 
- $right=New-Object System.Windows.Controls.Grid
- $right.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition)) | Out-Null
- $secondRow=New-Object System.Windows.Controls.RowDefinition
- $secondRow.Height=[System.Windows.GridLength]::Auto
- [void]$right.RowDefinitions.Add($secondRow)
- [System.Windows.Controls.Grid]::SetColumn($right,1)
+ $root=New-Object System.Windows.Controls.Grid
 
- $heading=New-Object System.Windows.Controls.StackPanel
- $heading.VerticalAlignment='Center'
- $name=New-Object System.Windows.Controls.TextBlock
- $name.Text=[string]$app.name;$name.FontFamily='Segoe UI'
- $name.Foreground=Brush '#F7FBFF';$name.FontSize=22;$name.FontWeight='SemiBold'
- $name.TextTrimming='CharacterEllipsis'
- $heading.Children.Add($name)|Out-Null
- $detail=New-Object System.Windows.Controls.TextBlock
- $showDetail=$true
- if($null -ne $app.PSObject.Properties['showDescription']){$showDetail=($app.showDescription -ne $false)}
- $description=[string]$app.description
- $detail.Text=$description
- $detail.Visibility=if($showDetail -and -not [string]::IsNullOrWhiteSpace($description)){'Visible'}else{'Collapsed'}
- $detail.Foreground=Brush '#9DBDDC';$detail.FontSize=9.5;$detail.Margin='0,5,0,0'
- [void]$heading.Children.Add($detail)
- [System.Windows.Controls.Grid]::SetRow($heading,0)
- [void]$right.Children.Add($heading)
+ $body=New-Object System.Windows.Controls.Border
+ $bodyGrad=New-Object System.Windows.Media.LinearGradientBrush
+ $bodyGrad.StartPoint=New-Object System.Windows.Point(0.5,0)
+ $bodyGrad.EndPoint=New-Object System.Windows.Point(0.5,1)
+ $b0=New-Object System.Windows.Media.GradientStop; $b0.Color=[System.Windows.Media.ColorConverter]::ConvertFromString('#B0182028'); $b0.Offset=0
+ $b1=New-Object System.Windows.Media.GradientStop; $b1.Color=[System.Windows.Media.ColorConverter]::ConvertFromString('#85080C12'); $b1.Offset=1
+ [void]$bodyGrad.GradientStops.Add($b0); [void]$bodyGrad.GradientStops.Add($b1)
+ $body.Background=$bodyGrad
+ $body.CornerRadius=New-Object System.Windows.CornerRadius(24)
 
- $footer=New-Object System.Windows.Controls.StackPanel
- $footer.Orientation='Horizontal';$footer.Margin='0,6,0,0'
- $line=New-Object System.Windows.Controls.Border
- $line.Width=19;$line.Height=2;$line.CornerRadius=New-Object System.Windows.CornerRadius(2)
- $line.Background=Brush '#C0C6CE';$line.VerticalAlignment='Center';$line.Margin='0,0,8,0'
- [void]$footer.Children.Add($line)
- $action=New-Object System.Windows.Controls.TextBlock
- $action.Text=if($app.path -and (Test-Path ([string]$app.path))){'OPEN APPLICATION  >'}else{'CONFIGURE IN ADMIN'}
- $action.Foreground=Brush '#D0D5DB';$action.FontSize=10
- [void]$footer.Children.Add($action)
- [System.Windows.Controls.Grid]::SetRow($footer,1)
- [void]$right.Children.Add($footer)
- [void]$content.Children.Add($right)
- $btn.Content=$content
+ $main=New-Object System.Windows.Controls.StackPanel
+ $main.VerticalAlignment='Center'
+ $main.Margin='20,18,20,18'
 
+ $title=New-Object System.Windows.Controls.TextBlock
+ $title.Text=([string]$app.name).Trim();$title.FontFamily='Segoe UI'
+ $title.Foreground=Brush '#F7F9FA';$title.FontSize=22;$title.FontWeight='SemiBold'
+ $title.TextWrapping='Wrap';$title.TextTrimming='CharacterEllipsis'
+ $title.LineHeight=28;$title.MaxHeight=56
+ [void]$main.Children.Add($title)
+
+ $descRaw=[string]$app.description
+ if([string]::IsNullOrWhiteSpace($descRaw)){
+  $n=[string]$app.name
+  if($n -match '(?i)^(new\s*app|untitled|app)$'){ $descRaw='Add a diagnostic app' } else { $descRaw='Diagnostic application' }
+ }
+ $descRaw=$descRaw.Trim(); $maxDesc=42
+ if($descRaw.Length -gt $maxDesc){ $descRaw=($descRaw.Substring(0,$maxDesc-1).TrimEnd() + [string][char]0x2026) }
+ $desc=New-Object System.Windows.Controls.TextBlock
+ $desc.Text=$descRaw;$desc.FontFamily='Segoe UI'
+ $desc.Foreground=Brush '#C0C6CE';$desc.FontSize=12;$desc.FontWeight=$(if($script:boldCardDescription){'Bold'}else{'Normal'})
+ $desc.TextWrapping='Wrap';$desc.LineHeight=18;$desc.MaxHeight=40;$desc.Margin='0,10,0,0'
+ [void]$main.Children.Add($desc)
+
+ $body.Child=$main
+ [void]$root.Children.Add($body)
+
+ $btn.Content=$root
  $btn.Add_Click({
   param($sender,$ev)
   $selected=$script:apps | Where-Object { $_.name -eq $sender.Tag } | Select-Object -First 1
@@ -277,16 +259,46 @@ function Make-Card($app){
  })
  return $btn
 }
-
 function Render-Cards {
  $tiles.Items.Clear()
  foreach($app in $script:apps){if($app.enabled -ne $false){$tiles.Items.Add((Make-Card $app))|Out-Null}}
  if ($window.FindName('EmptyState')) { $window.FindName('EmptyState').Visibility = 'Collapsed' }
 }
+# Round opaque WPF admin dialog via DWM (Win11) + SetWindowRgn fallback. No AllowsTransparency.
+if (-not ("Workstation.AdminRound" -as [type])) {
+ Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+namespace Workstation {
+  public static class AdminRound {
+    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    public const int DWMWCP_ROUND = 2;
+    [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+    [DllImport("gdi32.dll")] public static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int w, int h);
+    [DllImport("user32.dll")] public static extern int SetWindowRgn(IntPtr hwnd, IntPtr hrgn, bool redraw);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hwnd, out RECT r);
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    public static void Apply(IntPtr hwnd, int radius) {
+      if (hwnd == IntPtr.Zero) return;
+      try { int pref = DWMWCP_ROUND; DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, 4); } catch { }
+      try {
+        RECT rc;
+        if (!GetClientRect(hwnd, out rc)) return;
+        int w = rc.Right - rc.Left;
+        int h = rc.Bottom - rc.Top;
+        if (w < 8 || h < 8) return;
+        IntPtr rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius);
+        if (rgn != IntPtr.Zero) SetWindowRgn(hwnd, rgn, true);
+      } catch { }
+    }
+  }
+}
+"@
+}
 function Admin-Dialog {
  # Centered on Home (Owner + CenterOwner). Not fullscreen. Dark Mercedes chrome, PowerShell 5.1.
  $x=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Workstation Administration" Width="690" Height="570" MinWidth="600" MinHeight="480" WindowStartupLocation="CenterOwner" WindowStyle="None" ResizeMode="CanResize" WindowState="Normal" ShowInTaskbar="True" Background="#0C121C" Foreground="#F4F8FC" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Workstation Administration" Width="690" Height="570" MinWidth="600" MinHeight="480" WindowStartupLocation="CenterOwner" WindowStyle="None" ResizeMode="NoResize" WindowState="Normal" ShowInTaskbar="True" Background="#0C121C" Foreground="#F4F8FC" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
 <Window.Resources>
  <Style x:Key="AdminButton" TargetType="Button">
   <Setter Property="Foreground" Value="#E7F0FA"/>
@@ -383,7 +395,7 @@ function Admin-Dialog {
   </Setter>
  </Style>
 </Window.Resources>
-<Border BorderBrush="#6D8199" BorderThickness="1" Background="#0C121C">
+<Border BorderBrush="Transparent" BorderThickness="0" Background="#0C121C" CornerRadius="16">
 <Grid Margin="21,16.5,21,15">
  <Grid.RowDefinitions>
   <RowDefinition Height="Auto"/>
@@ -431,6 +443,7 @@ function Admin-Dialog {
      <Button x:Name="MoveUp" Content="MOVE UP" Margin="0,0,6,6" Style="{StaticResource AdminButton}"/>
      <Button x:Name="MoveDown" Content="MOVE DOWN" Margin="0,0,6,6" Style="{StaticResource AdminButton}"/>
     </WrapPanel>
+    <CheckBox x:Name="BoldCardTextInput" Content="Bold description text on home cards" Margin="0,0,0,10" IsChecked="False" MinHeight="48"/>
     <TextBlock Text="Tip: Custom icon images look best with a transparent background. Existing saved application paths are preserved." TextWrapping="Wrap" Foreground="#8AA4BE" FontSize="9" Margin="0,6,0,0"/>
    </StackPanel>
   </ScrollViewer>
@@ -446,10 +459,26 @@ function Admin-Dialog {
  $x=$x.Replace('THEME_ACCENT_SOFT',$accentSoft).Replace('THEME_ACCENT',$accent)
  $x=$x.Replace('UNIVERSAL_BRAND_LABEL',[Security.SecurityElement]::Escape([string]$script:brandName.ToUpperInvariant()))
  $dlg=[Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader ([xml]$x)))
- $dlg.Owner=$window
+  $dlg.Owner=$window
+ try {
+  $dlg.Add_SourceInitialized({
+   param($s,$e)
+   try {
+    $hwnd = ([System.Windows.Interop.WindowInteropHelper]$s).Handle
+    [Workstation.AdminRound]::Apply($hwnd, 16)
+   } catch {}
+  }.GetNewClosure())
+  $dlg.Add_SizeChanged({
+   param($s,$e)
+   try {
+    $hwnd = ([System.Windows.Interop.WindowInteropHelper]$s).Handle
+    if ($hwnd -ne [IntPtr]::Zero) { [Workstation.AdminRound]::Apply($hwnd, 16) }
+   } catch {}
+  }.GetNewClosure())
+ } catch {}
  $dlg.FindName('DragHeader').Add_MouseLeftButtonDown({ param($sender,$evt) if($evt.ButtonState -eq 'Pressed'){ $dlg.DragMove() } }.GetNewClosure())
  $dlg.FindName('CloseAdmin').Add_Click({ $dlg.Close() }.GetNewClosure())
- $lst=$dlg.FindName('AppList');$nm=$dlg.FindName('NameInput');$pa=$dlg.FindName('PathInput');$ic=$dlg.FindName('IconInput');$en=$dlg.FindName('EnabledInput');$ds=$dlg.FindName('DescriptionInput');$sd=$dlg.FindName('ShowDescriptionInput')
+ $lst=$dlg.FindName('AppList');$nm=$dlg.FindName('NameInput');$pa=$dlg.FindName('PathInput');$ic=$dlg.FindName('IconInput');$en=$dlg.FindName('EnabledInput');$ds=$dlg.FindName('DescriptionInput');$sd=$dlg.FindName('ShowDescriptionInput');$boldCard=$dlg.FindName('BoldCardTextInput'); if($boldCard){$boldCard.IsChecked=[bool]$script:boldCardDescription}
  $script:editingApps=New-Object System.Collections.ArrayList
  foreach($a in $script:apps){[void]$script:editingApps.Add([pscustomobject]@{name=[string]$a.name;path=[string]$a.path;icon=[string]$a.icon;symbol=[string]$a.symbol;enabled=($a.enabled -ne $false);description=[string]$a.description;showDescription=($a.showDescription -ne $false)})}
  function New-TileRow($app) {
@@ -527,7 +556,7 @@ function Admin-Dialog {
  $dlg.FindName('Remove').Add_Click({$i=$lst.SelectedIndex;if($i -ge 0){$script:editingApps.RemoveAt($i);Refresh-List}})
  $dlg.FindName('MoveUp').Add_Click({$i=$lst.SelectedIndex;if($i -gt 0){$a=$script:editingApps[$i];$script:editingApps.RemoveAt($i);$script:editingApps.Insert($i-1,$a);Refresh-List;$lst.SelectedIndex=$i-1}})
  $dlg.FindName('MoveDown').Add_Click({$i=$lst.SelectedIndex;if($i -ge 0 -and $i -lt $script:editingApps.Count-1){$a=$script:editingApps[$i];$script:editingApps.RemoveAt($i);$script:editingApps.Insert($i+1,$a);Refresh-List;$lst.SelectedIndex=$i+1}})
- $dlg.FindName('SaveClose').Add_Click({Apply-Fields;$script:apps=@($script:editingApps.ToArray());Save-Apps;Render-Cards;$dlg.Close()})
+ $dlg.FindName('SaveClose').Add_Click({Apply-Fields;$script:apps=@($script:editingApps.ToArray());Save-Apps;$bc=$dlg.FindName('BoldCardTextInput'); if($bc){$script:boldCardDescription=($bc.IsChecked -eq $true);Save-Profile};Render-Cards;$dlg.Close()})
  Refresh-List
  [void]$dlg.ShowDialog()
 }
