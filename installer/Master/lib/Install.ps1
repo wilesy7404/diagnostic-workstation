@@ -180,7 +180,32 @@ function Repair-InterruptedInstall {
     throw 'Interrupted install left an unmarked root. Nothing was installed.'
   }
   Remove-Item -LiteralPath $ProgressPath -Force
-  if ($restored) { throw 'Recovered an interrupted install. Previous files were restored. Nothing new was installed.' }
+  if ($restored) {
+    if (Test-Path -LiteralPath $root -PathType Container) {
+      $failedRepair = $root + '.failed-repair'
+      if (Test-Path -LiteralPath $failedRepair) { Remove-Item -LiteralPath $failedRepair -Recurse -Force }
+    }
+    throw 'Recovered an interrupted install. Previous files were restored. Nothing new was installed.'
+  }
+}
+
+function Assert-InstallTargetAllowed {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$Brand,
+    [Parameter(Mandatory = $true)][string]$Version,
+    [switch]$AllowDowngrade
+  )
+  $existing = $null
+  if (Test-Path -LiteralPath $Root -PathType Container) { $existing = Read-InstalledMarker $Root }
+  if ($existing -and [string]$existing.brand -and [string]$existing.brand -ne $Brand) {
+    throw "Install root belongs to $($existing.brand). Nothing was installed."
+  }
+  if ($existing -and [string]$existing.version -and -not $AllowDowngrade) {
+    if ((Get-ReleaseRank $Version) -lt (Get-ReleaseRank ([string]$existing.version))) {
+      throw 'Refusing to install an older approved version. Nothing was installed.'
+    }
+  }
 }
 
 function Install-VerifiedTree {
@@ -198,16 +223,7 @@ function Install-VerifiedTree {
   $parent = Split-Path -Parent $Root
   if ([string]::IsNullOrWhiteSpace($parent)) { throw 'Install root has no parent. Nothing was installed.' }
   if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-  $existing = $null
-  if (Test-Path -LiteralPath $Root -PathType Container) { $existing = Read-InstalledMarker $Root }
-  if ($existing -and [string]$existing.brand -and [string]$existing.brand -ne $Brand) {
-    throw "Install root belongs to $($existing.brand). Nothing was installed."
-  }
-  if ($existing -and [string]$existing.version -and -not $AllowDowngrade) {
-    if ((Get-ReleaseRank $Version) -lt (Get-ReleaseRank ([string]$existing.version))) {
-      throw 'Refusing to install an older approved version. Nothing was installed.'
-    }
-  }
+  Assert-InstallTargetAllowed -Root $Root -Brand $Brand -Version $Version -AllowDowngrade:$AllowDowngrade
   $leaf = Split-Path -Leaf $Root
   $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
   $prevLeaf = '{0}.prev-{1}' -f $leaf, $stamp
@@ -220,6 +236,10 @@ function Install-VerifiedTree {
   if ($existed) { Copy-PreservedTree $Root $Staging }
   if ($existed) { Rename-Item -LiteralPath $Root -NewName $prevLeaf }
   try {
+    # Library test hook. Install-Master.ps1 deletes this variable before elevation, so a production run cannot set it.
+    if ($env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP -eq '1') {
+      throw 'test-only failure during install swap'
+    }
     Rename-Item -LiteralPath $Staging -NewName $leaf
     $marker = [ordered]@{
       schema = 'diagnostic-workstation.installed-bundle/v1'
@@ -333,6 +353,8 @@ function Install-ApprovedBrand {
       }
     }
     Assert-InstallSpace $root ([int64]$release.bytes)
+    # Refuse a foreign brand or a downgrade before the lock file exists and before any supervisor stop.
+    Assert-InstallTargetAllowed -Root $root -Brand $Brand -Version ([string]$release.version) -AllowDowngrade:$AllowDowngrade
     # Hold the lock before the rename. WorkstationManager will not start a new PowerShell
     # while it exists. The renamed previous folder takes this copy with it, so the new
     # root gets a fresh lock before Windows Update or Defender run.

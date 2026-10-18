@@ -88,8 +88,12 @@ jobs:
             $runId = [string]$runIds[$id]
             if ([string]::IsNullOrWhiteSpace($runId)) { throw "catalog pins $tag but no run id was provided for $id" }
             $api = "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/artifacts"
+            $previousEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
             $listedText = (& gh api $api 2>&1 | Out-String)
-            if ($LASTEXITCODE -ne 0) { throw "gh api failed for run $runId (exit $LASTEXITCODE). $listedText" }
+            $listedExit = $LASTEXITCODE
+            $ErrorActionPreference = $previousEap
+            if ($listedExit -ne 0) { throw "gh api failed for run $runId (exit $listedExit). $listedText" }
             $listed = $listedText | ConvertFrom-Json
             $match = @()
             foreach ($artifact in @($listed.artifacts)) {
@@ -101,8 +105,11 @@ jobs:
             }
             $dir = Join-Path 'offline' $tag
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            & gh run download $runId --repo $env:GITHUB_REPOSITORY --name $tag --dir $dir
-            if ($LASTEXITCODE -ne 0) { throw "gh run download failed for $tag (exit $LASTEXITCODE)" }
+            $ErrorActionPreference = 'Continue'
+            $downloadText = (& gh run download $runId --repo $env:GITHUB_REPOSITORY --name $tag --dir $dir 2>&1 | Out-String)
+            $downloadExit = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            if ($downloadExit -ne 0) { throw "gh run download failed for $tag (exit $downloadExit). $downloadText" }
             foreach ($name in @('workstation.zip', 'update-manifest.json')) {
               $path = Join-Path $dir $name
               if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing $path" }

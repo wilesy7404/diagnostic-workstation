@@ -123,8 +123,37 @@ function Clear-BrandTree([string]$Root) {
   if (Test-Path -LiteralPath $Root) { Remove-Item -LiteralPath $Root -Recurse -Force }
   if (-not (Test-Path -LiteralPath $parent)) { return }
   Get-ChildItem -LiteralPath $parent -Force -ErrorAction SilentlyContinue | Where-Object {
-    $_.Name -like ($leaf + '.prev-*') -or $_.Name -like ($leaf + '.failed-*') -or $_.Name -like ('.staging-' + $leaf + '*')
+    $_.Name -like ($leaf + '.prev-*') -or $_.Name -like ($leaf + '.failed-*') -or $_.Name -like '.staging-*'
   } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+function Get-TreeFingerprint([string]$Root) {
+  if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return 'MISSING' }
+  $lines = New-Object System.Collections.Generic.List[string]
+  foreach ($file in @(Get-ChildItem -LiteralPath $Root -Recurse -File -Force | Sort-Object FullName)) {
+    $relative = $file.FullName.Substring($Root.Length).TrimStart('\', '/').Replace('\', '/')
+    $lines.Add(($relative + '=' + (Get-HexSha256 $file.FullName))) | Out-Null
+  }
+  return (($lines.ToArray()) -join "`n")
+}
+
+function Get-InstallResidue([string]$Root) {
+  $parent = Split-Path -Parent $Root
+  $leaf = Split-Path -Leaf $Root
+  if (-not (Test-Path -LiteralPath $parent)) { return '' }
+  $names = New-Object System.Collections.Generic.List[string]
+  foreach ($item in @(Get-ChildItem -LiteralPath $parent -Force -ErrorAction SilentlyContinue | Sort-Object Name)) {
+    if ($item.Name -like ($leaf + '.prev-*') -or $item.Name -like ($leaf + '.failed-*') -or $item.Name -like '.staging-*') {
+      $names.Add($item.Name) | Out-Null
+    }
+  }
+  return (($names.ToArray()) -join "`n")
+}
+
+function Get-SiblingBrandFingerprint([string]$BrandId) {
+  $other = 'bmw'
+  if ($BrandId -eq 'bmw') { $other = 'mercedes' }
+  return (Get-TreeFingerprint (Resolve-BrandInstallRoot $other))
 }
 
 function Get-StartupSnapshot {
@@ -304,10 +333,11 @@ function Add-UnpinnedTagCheck([string]$BrandId, [string]$TagPrefix, [string]$Sou
   $logStem = Join-Path $ReportDir ($BrandId + '-unpinned-tag')
   $result = Invoke-BrandInstall $BrandId $rejectedTag $SourcePath $logStem
   $rootExists = Test-Path -LiteralPath $Root
-  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $rootExists -or $result.Text -notmatch 'No approved') {
-    Add-Check $BrandId 'unpinned-tag' 'FAIL' ("tag {0} exit {1} rootExists={2}. {3}" -f $rejectedTag, $result.Code, $rootExists, $result.Text)
+  $residue = Get-InstallResidue $Root
+  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $rootExists -or $result.Text -notmatch 'No approved' -or -not [string]::IsNullOrEmpty($residue)) {
+    Add-Check $BrandId 'unpinned-tag' 'FAIL' ("tag {0} exit {1} rootExists={2} residue='{3}'. {4}" -f $rejectedTag, $result.Code, $rootExists, $residue, $result.Text)
   } else {
-    Add-Check $BrandId 'unpinned-tag' 'PASS' ("unpinned tag {0} was rejected with exit {1} and the brand folder was not created" -f $rejectedTag, $result.Code)
+    Add-Check $BrandId 'unpinned-tag' 'PASS' ("unpinned tag {0} was rejected with exit {1}, the brand folder was not created, and no .staging-* leftover was present" -f $rejectedTag, $result.Code)
   }
   Remove-InstallProgress
   Clear-BrandTree $Root
@@ -322,16 +352,25 @@ function Add-WrongTargetCheck([string]$BrandId, [string]$TagName, [string]$Sourc
   $markerPath = Join-Path $Root '.installed-bundle.json'
   $markerText = '{"schema":"diagnostic-workstation.installed-bundle/v1","brand":"' + $foreign + '","tag":"foreign","version":"0.0.0"}' + "`n"
   [System.IO.File]::WriteAllText($markerPath, $markerText)
+  [System.IO.File]::WriteAllText((Join-Path $Root 'Launcher.ps1'), "Write-Output 'foreign-live'`n")
+  $beforeTree = Get-TreeFingerprint $Root
+  $beforeResidue = Get-InstallResidue $Root
+  $beforeSibling = Get-SiblingBrandFingerprint $BrandId
   $logStem = Join-Path $ReportDir ($BrandId + '-wrong-target')
   $result = Invoke-BrandInstall $BrandId $TagName $SourcePath $logStem
+  $afterTree = Get-TreeFingerprint $Root
+  $afterResidue = Get-InstallResidue $Root
+  $afterSibling = Get-SiblingBrandFingerprint $BrandId
   $stillForeign = $false
   if (Test-Path -LiteralPath $markerPath) {
     $stillForeign = [string](Read-JsonFile $markerPath).brand -eq $foreign
   }
-  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch 'belongs to' -or -not $stillForeign) {
-    Add-Check $BrandId 'wrong-target' 'FAIL' ("foreign {0} marker exit {1} stillForeign={2}. {3}" -f $foreign, $result.Code, $stillForeign, $result.Text)
+  $lockLeft = Test-Path -LiteralPath (Join-Path $Root 'install-in-progress.lock')
+  $unchanged = ($beforeTree -ceq $afterTree) -and ($beforeResidue -ceq $afterResidue) -and ($beforeSibling -ceq $afterSibling)
+  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch 'belongs to' -or -not $stillForeign -or $lockLeft -or -not $unchanged) {
+    Add-Check $BrandId 'wrong-target' 'FAIL' ("foreign {0} marker exit {1} stillForeign={2} lockLeft={3} unchanged={4}. {5}" -f $foreign, $result.Code, $stillForeign, $lockLeft, $unchanged, $result.Text)
   } else {
-    Add-Check $BrandId 'wrong-target' 'PASS' ("install into a {0} folder was rejected with exit {1} and that marker was left in place" -f $foreign, $result.Code)
+    Add-Check $BrandId 'wrong-target' 'PASS' ("install into a {0} folder was rejected with exit {1}. The foreign tree, its sibling brand folder, and install residue were unchanged, and no install-in-progress.lock was left" -f $foreign, $result.Code)
   }
   Remove-InstallProgress
   Clear-BrandTree $Root
@@ -367,13 +406,13 @@ function Add-ExtraFilesCheck([string]$BrandId, [string]$Root, $Manifest) {
   }
 }
 
-function Add-RollbackCheck([string]$BrandId, [string]$TagName, [string]$SourcePath, [string]$Root) {
+function Add-InterruptedSwapCheck([string]$BrandId, [string]$TagName, [string]$SourcePath, [string]$Root) {
   $markerPath = Join-Path $Root '.installed-bundle.json'
   if (-not (Test-Path -LiteralPath $markerPath)) {
-    Add-Check $BrandId 'rollback' 'FAIL' 'fresh install has no marker, so mid-install rollback was not run'
+    Add-Check $BrandId 'interrupted-swap' 'FAIL' 'fresh install has no marker, so interrupted-swap recovery was not run'
     return
   }
-  $before = Get-HexSha256 $markerPath
+  $beforeTree = Get-TreeFingerprint $Root
   $parent = Split-Path -Parent $Root
   $leaf = Split-Path -Leaf $Root
   $prev = Join-Path $parent ($leaf + '.prev-vm-rollback')
@@ -384,17 +423,20 @@ function Add-RollbackCheck([string]$BrandId, [string]$TagName, [string]$SourcePa
   $progressPath = Join-Path $script:InstallerData 'install-in-progress.json'
   $record = [pscustomobject]@{ phase = 'swapping'; brand = $BrandId; root = $Root; prev = $prev; tag = $TagName }
   [System.IO.File]::WriteAllText($progressPath, (($record | ConvertTo-Json -Compress) + "`n"))
-  $logStem = Join-Path $ReportDir ($BrandId + '-rollback')
+  $logStem = Join-Path $ReportDir ($BrandId + '-interrupted-swap')
   $result = Invoke-BrandInstall $BrandId $TagName $SourcePath $logStem
-  $restored = (Test-Path -LiteralPath $markerPath) -and ((Get-HexSha256 $markerPath) -eq $before) -and -not (Test-Path -LiteralPath (Join-Path $Root 'partial.txt'))
-  Get-ChildItem -LiteralPath $parent -Force -ErrorAction SilentlyContinue | Where-Object {
-    $_.Name -like ($leaf + '.failed-*') -or $_.Name -eq ($leaf + '.prev-vm-rollback')
-  } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
-  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch 'restored' -or -not $restored) {
-    Add-Check $BrandId 'rollback' 'FAIL' ("mid-install recovery exit {0} restored={1}. {2}" -f $result.Code, $restored, $result.Text)
+  $afterTree = Get-TreeFingerprint $Root
+  $residue = Get-InstallResidue $Root
+  $sameTree = ($beforeTree -ceq $afterTree) -and ($beforeTree -ne 'MISSING')
+  $clean = [string]::IsNullOrEmpty($residue)
+  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch 'restored' -or -not $sameTree -or -not $clean) {
+    Add-Check $BrandId 'interrupted-swap' 'FAIL' ("interrupted-swap recovery exit {0} sameTree={1} residue='{2}'. {3}" -f $result.Code, $sameTree, $residue, $result.Text)
   } else {
-    Add-Check $BrandId 'rollback' 'PASS' ("an interrupted swap was rolled back with exit {0} and the previous marker was restored" -f $result.Code)
+    Add-Check $BrandId 'interrupted-swap' 'PASS' ("an interrupted swap restored the previous tree byte for byte with exit {0}, including every file hash, and left no .prev-*, .failed-*, or .staging-* residue" -f $result.Code)
   }
+  Get-ChildItem -LiteralPath $parent -Force -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -like ($leaf + '.failed-*') -or $_.Name -like ($leaf + '.prev-*') -or $_.Name -like '.staging-*'
+  } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 function Get-ExpectedInstallExit($State) {
@@ -541,6 +583,7 @@ try { Start-Transcript -LiteralPath $transcript -Force | Out-Null } catch { }
 Add-Check 'host' 'reboot-logon' 'NOT PROVEN' 'A hosted runner does not reboot or start a new logon session, so startup-at-logon is not proven. Registry before and after the install is a separate check.'
 Add-Check 'host' 'tamper-protection' 'NOT PROVEN' 'Tamper Protection behavior is not proven. Hosted runner images usually have it off or unmanaged, and an interactive Tamper Protection prompt cannot be answered here.'
 Add-Check 'host' 'interactive-ui' 'NOT PROVEN' 'Interactive desktop UI is not proven. This run does not open the launcher, dock, or shell.'
+Add-Check 'host' 'in-install-failure' 'NOT PROVEN' 'The catch inside Install-VerifiedTree is not armed on this run. Install-Master.ps1 deletes DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP before elevation, so a hosted install cannot inject a failure during the swap. scripts/Test-MasterInstaller.ps1 proves that catch in-process.'
 Add-DpiCheck
 
 $catalogPath = Join-Path $RepoRoot 'catalog\catalog.json'
@@ -773,9 +816,9 @@ foreach ($brand in $brands) {
     if ($note) { $e += New-Part 'PASS' ("catalog supervisor note: {0}" -f $note) }
     Add-CombinedCheck $id 'e' $e
     if ($pinMatch) {
-      Add-RollbackCheck $id $tag $offlineParent $root
+      Add-InterruptedSwapCheck $id $tag $offlineParent $root
     } else {
-      Add-Check $id 'rollback' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
+      Add-Check $id 'interrupted-swap' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
     }
 
     $f = @()
@@ -1024,7 +1067,7 @@ $summary.Add(('Catalog ref: {0}' -f $CatalogRef))
 $summary.Add(('Mercedes artifact run: {0}' -f $MercedesRunId))
 $summary.Add(('BMW artifact run: {0}' -f $BmwRunId))
 $summary.Add('')
-$summary.Add('NOT PROVEN is not a pass. NOT RUN means that brand has no catalog pin and was skipped. A hosted runner cannot show reboot or logon startup, Tamper Protection, or interactive UI. DPI awareness is NOT PROVEN because the launcher process is not started. Defender and Windows Update end state are NOT PROVEN when the runner image does not expose them.')
+$summary.Add('NOT PROVEN is not a pass. NOT RUN means that brand has no catalog pin and was skipped. A hosted runner cannot show reboot or logon startup, Tamper Protection, or interactive UI. DPI awareness is NOT PROVEN because the launcher process is not started. Defender and Windows Update end state are NOT PROVEN when the runner image does not expose them. The in-install swap catch is NOT PROVEN here because Install-Master.ps1 clears the test-only hook before elevation.')
 $summary.Add('')
 $summary.Add('## Checks')
 $summary.Add('')
