@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build a Mercedes workstation.zip and update-manifest.json. Does not publish.
 
-The version is an argument (default 0.1.3-beta.3). version.json in the bundle is
+The version is an argument (default 0.1.3-beta.4). version.json in the bundle is
 the canonical encoding of that version, so a later version does not need a new
-workflow guard or a new frozen hash. The beta.3 hash below only checks that
+workflow guard or a new frozen hash. The beta.4 hash below only checks that
 encoder.
 """
 
@@ -25,11 +25,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "handoff" / "2026-10-14" / "live-source" / "Mercedes"
 LIVE_ZIP = ROOT / "handoff" / "2026-10-14" / "live-builds" / "Mercedes-LIVE-BUILD-20261014-202042.zip"
 BUILD_MANIFEST = SOURCE / "BUILD-MANIFEST.json"
-DEFAULT_VERSION = "0.1.3-beta.3"
+DEFAULT_VERSION = "0.1.3-beta.4"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$")
-# {"version":"0.1.3-beta.3"} with no trailing newline.
-BETA3_VERSION_JSON_SHA256 = "9b20aa7d3c0e616e397c52213ea068a04544bf72d101d6e37dbdd3fc6d9a690a"
-BETA3_VERSION_JSON_BYTES = 26
+# {"version":"0.1.3-beta.4"} with no trailing newline.
+BETA4_VERSION_JSON_SHA256 = "981da7a8e5d34cf8b2a6b7d1f6ef86e0c34fb67f2d4ebe87e6010bf4f8a75de2"
+BETA4_VERSION_JSON_BYTES = 26
 OWN_LOGO = "branding/mercedes.png"
 MANAGER_BRAND = "mercedes"
 CHANGED = {
@@ -100,11 +100,11 @@ def packaged_version_json(version: str) -> bytes:
     if parsed.get("version") != version or sha256(data) != sha256(canonical_version_json(version)):
         raise SystemExit("version.json encoder did not round-trip")
     if version == DEFAULT_VERSION:
-        if sha256(data) != BETA3_VERSION_JSON_SHA256 or len(data) != BETA3_VERSION_JSON_BYTES:
-            raise SystemExit("beta.3 version.json integrity guard failed")
+        if sha256(data) != BETA4_VERSION_JSON_SHA256 or len(data) != BETA4_VERSION_JSON_BYTES:
+            raise SystemExit("beta.4 version.json integrity guard failed")
         source = (SOURCE / "version.json").read_bytes()
         if source != data:
-            raise SystemExit("source version.json is not the canonical 0.1.3-beta.3 file")
+            raise SystemExit("source version.json is not the canonical 0.1.3-beta.4 file")
     return data
 
 
@@ -201,9 +201,9 @@ def assert_current_package(staged: list[tuple[str, bytes]], version: str) -> Non
     if version_bytes != canonical_version_json(version):
         raise SystemExit(f"packaged version.json is not {version}")
     if version == DEFAULT_VERSION and (
-        sha256(version_bytes) != BETA3_VERSION_JSON_SHA256 or len(version_bytes) != BETA3_VERSION_JSON_BYTES
+        sha256(version_bytes) != BETA4_VERSION_JSON_SHA256 or len(version_bytes) != BETA4_VERSION_JSON_BYTES
     ):
-        raise SystemExit("packaged version.json failed the beta.3 integrity guard")
+        raise SystemExit("packaged version.json failed the beta.4 integrity guard")
     for path in ("ApplyUpdate.ps1", "UpdateAgent.ps1"):
         want_hash, want_bytes = APPROVED_HASHES[path]
         data = files[path]
