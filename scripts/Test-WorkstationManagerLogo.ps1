@@ -21,9 +21,11 @@ if ($IsWindows -and $env:WORKSTATION_MANAGER_EXE) {
   $installRoot = Join-Path $env:LOCALAPPDATA 'DiagnosticWorkstation'
   $existed = Test-Path -LiteralPath $installRoot
   $report = Join-Path ([System.IO.Path]::GetTempPath()) ('wm-brand-' + [guid]::NewGuid().ToString() + '.txt')
-  & $exe /report-brand $report
-  if ($LASTEXITCODE -ne 0) { throw "report-brand exited $LASTEXITCODE" }
-  if (-not (Test-Path -LiteralPath $report)) { throw 'report-brand wrote no file' }
+  # The exe is linked -H windowsgui. The call operator does not wait for a GUI
+  # subsystem process, and $LASTEXITCODE stays at the previous command's 0.
+  $proc = Start-Process -FilePath $exe -ArgumentList @('/report-brand', $report) -Wait -PassThru -WindowStyle Hidden
+  if ($proc.ExitCode -ne 0) { throw "report-brand exited $($proc.ExitCode)" }
+  if (-not (Test-Path -LiteralPath $report)) { throw "report-brand wrote no file (exit $($proc.ExitCode))" }
   $got = (Get-Content -Raw -LiteralPath $report).Trim()
   Remove-Item -LiteralPath $report
   if ($got -ne 'mercedes') { throw "embeddedBrand is '$got', expected mercedes" }

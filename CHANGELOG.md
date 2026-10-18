@@ -2,6 +2,10 @@
 
 BMW `1.0.2-beta.1` is pinned and not published. There is no tag and no GitHub release yet. Mercedes `0.1.3-beta.3` was built and then voided. It was never tagged or published, and it is not pinned. Mercedes `0.1.3-beta.4` is pending.
 
+## Mercedes-Benz 0.1.3-beta.4 (pending, not pinned)
+
+The Mercedes `WorkstationManager.exe` for this build is a Go module build (`go 1.23.2` with `godebug default=go1.20`). That module build matches the Oct 14 runtime GODEBUG defaults except `netedns0`, which this program does not use. Only the non-module rebuild of the unmodified v1.2 source reproduces `4981dc756c970e3a9bc4890f79a57cd0a525d525eb0da7ccfe050d3263a9c63f` byte for byte, and only when `-buildid` is the Oct 14 build ID. The module build does not. This exe embeds only `branding/mercedes.png`. The local and `windows-latest` double compile is SHA-256 `925e613647ef6bf4eea6a90ccdd3f116c7c8b173c39fee5111984443561dbf4b`, 2387968 bytes. It is not tagged, not released, and not pinned. The `4981dc75…` file listed under voided `0.1.3-beta.3` is that older all-logo binary, not this exe.
+
 ## Mercedes-Benz 0.1.3-beta.3 (built, voided, never published) — 2026-10-17
 
 Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, #11, and #12.
