@@ -1,0 +1,101 @@
+name: VM install test
+
+# Manual install test only. This workflow does not create a release, push a tag, or publish assets.
+# The catalog comes from catalog_ref. The harness script comes from the workflow commit,
+# so a catalog branch that does not yet contain this file can still be tested.
+on:
+  workflow_dispatch:
+    inputs:
+      mercedes_run_id:
+        description: 'Actions run id for the Mercedes bundle artifact'
+        required: true
+        default: '39087424705'
+        type: string
+      bmw_run_id:
+        description: 'Actions run id for the BMW bundle artifact'
+        required: true
+        default: '39087426283'
+        type: string
+      catalog_ref:
+        description: 'Git ref whose catalog/catalog.json is used'
+        required: true
+        default: 'main'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  vm-install-test:
+    runs-on: windows-latest
+    steps:
+      - name: Check out catalog ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.catalog_ref }}
+
+      - name: Check out the VM harness from this workflow commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: vm-harness
+
+      - name: Parse workflow scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem -Path 'installer\Master' -Filter '*.ps1' -Recurse | ForEach-Object { $_.FullName })
+          $files += (Join-Path (Get-Location) 'vm-harness\scripts\Invoke-VmInstallTest.ps1')
+          if ($files.Count -lt 2) { throw 'Installer or harness script is missing' }
+          foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file)) { throw "Missing $file" }
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)
+            if (@($errors).Count -gt 0) {
+              foreach ($problem in @($errors)) { Write-Error "$file : $($problem.Message)" }
+              throw "Syntax validation failed: $file"
+            }
+            Write-Output "PASS parse $file"
+          }
+
+      - name: Download bundle artifacts
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERCEDES_RUN_ID: ${{ inputs.mercedes_run_id }}
+          BMW_RUN_ID: ${{ inputs.bmw_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'offline\mercedes-v0.1.3-beta.3' | Out-Null
+          New-Item -ItemType Directory -Force -Path 'offline\bmw-v1.0.2-beta.1' | Out-Null
+          gh run download $env:MERCEDES_RUN_ID --repo $env:GITHUB_REPOSITORY --name mercedes-v0.1.3-beta.3 --dir 'offline\mercedes-v0.1.3-beta.3'
+          gh run download $env:BMW_RUN_ID --repo $env:GITHUB_REPOSITORY --name bmw-v1.0.2-beta.1 --dir 'offline\bmw-v1.0.2-beta.1'
+          foreach ($dir in @('offline\mercedes-v0.1.3-beta.3', 'offline\bmw-v1.0.2-beta.1')) {
+            foreach ($name in @('workstation.zip', 'update-manifest.json')) {
+              $path = Join-Path $dir $name
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing $path" }
+              Write-Output "staged $path"
+            }
+          }
+
+      - name: Run offline install test
+        shell: powershell
+        env:
+          CATALOG_REF: ${{ inputs.catalog_ref }}
+          MERCEDES_RUN_ID: ${{ inputs.mercedes_run_id }}
+          BMW_RUN_ID: ${{ inputs.bmw_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'vm-install-test-output' | Out-Null
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File 'vm-harness\scripts\Invoke-VmInstallTest.ps1' -RepoRoot (Get-Location).Path -ReportDir (Join-Path (Get-Location).Path 'vm-install-test-output') -CatalogRef $env:CATALOG_REF -MercedesRunId $env:MERCEDES_RUN_ID -BmwRunId $env:BMW_RUN_ID
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload installer logs and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-install-test
+          if-no-files-found: warn
+          path: vm-install-test-output/**

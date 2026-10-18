@@ -15,6 +15,8 @@ jobs:
         shell: pwsh
         run: |
           $files = @(Get-ChildItem -Path core,installer -Filter '*.ps1' -Recurse -ErrorAction SilentlyContinue)
+          $harness = Get-Item -LiteralPath 'scripts/Invoke-VmInstallTest.ps1'
+          $files += $harness
           if ($files.Count -eq 0) { throw 'No PowerShell files found' }
           foreach ($file in $files) {
             $tokens = $null
