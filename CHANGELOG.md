@@ -8,7 +8,47 @@ Source commit `2b138bf07b0b083615a76a7c16da5e27f16b75e8`. Workflow run [39091982
 
 `workstation.zip` is 1321743 bytes, SHA-256 `ac8a82c0052cd1718cc050c5e28418efe5ed7afea104baaeb0940fcc612f661a`. `update-manifest.json` is 3338 bytes, SHA-256 `8c5d857933654bcbfa5bc84140c513d2c3d83863e2e3c0cf956c7471891abdc9`. contentDigest `b43616e9f62b1c254115eab33bbce36eeaf410b60e1de723f3125d18a5267779`. 20 files.
 
-The Mercedes `WorkstationManager.exe` in this zip is a Go module build (`go 1.23.2` with `godebug default=go1.20`), SHA-256 `925e613647ef6bf4eea6a90ccdd3f116c7c8b173c39fee5111984443561dbf4b`, 2387968 bytes. That module build matches the Oct 14 runtime GODEBUG defaults except `netedns0`, which this program does not use. Only the non-module rebuild of the unmodified v1.2 source reproduces `4981dc756c970e3a9bc4890f79a57cd0a525d525eb0da7ccfe050d3263a9c63f` byte for byte, and only when `-buildid` is the Oct 14 build ID. The module build does not. This exe embeds only `branding/mercedes.png`. The zip's only logo file is `branding/mercedes.png`. Compared with voided `0.1.3-beta.3` (run 39087424705), only `WorkstationManager.exe` and `version.json` differ.
+The Mercedes `WorkstationManager.exe` in this zip is a Go module build (`go 1.23.2` with `godebug default=go1.20`), SHA-256 `925e613647ef6bf4eea6a90ccdd3f116c7c8b173c39fee5111984443561dbf4b`, 2387968 bytes. That module build matches the Oct 14 runtime GODEBUG defaults except `netedns0`, which this program does not use. Only the non-module rebuild of the unmodified v1.2 source reproduces `4981dc756c970e3a9bc4890f79a57cd0a525d525eb0da7ccfe050d3263a9c63f` byte for byte, and only when `-buildid` is the Oct 14 build ID. The module build does not. This exe embeds only `branding/mercedes.png`. The zip's only logo file is `branding/mercedes.png`.
+
+Changes since prior label `mercedes-v0.1.3-beta.2` (beta.3 voided):
+
+- `0.1.3-beta.3` was built as run 39087424705 and voided before it was tagged or published, because its `WorkstationManager.exe` embedded every brand logo. It is not pinned.
+- `WorkstationManager.exe` embeds only `branding/mercedes.png`. Against the voided beta.3 zip, only `WorkstationManager.exe` and `version.json` differ.
+- `version.json` is `{"version":"0.1.3-beta.4"}` with no trailing newline.
+- `apps.json` is not in the bundle and is kept on the machine.
+- An existing `profile.json` is kept. A fresh install receives the bundle default.
+- Non-ASCII `.ps1` files that had no UTF-8 BOM get that BOM during packaging.
+
+Known issues / untested:
+
+- no VM install test yet
+- DPI, multi-monitor, and the real PS 5.1 runtime are unverified
+- a blank `Install ` prompt appears when `brands.json` lacks the embedded brand
+
+File list (SHA-256, uncompressed bytes, path):
+
+```
+d75973d02b44881a1a254063d8151b8e67bdbecf4bafe0a780fdd827ba8ad0a8  15382  ApplyUpdate.ps1
+e30e35f2145164f50de580166cdecf85cd9d850d1d91a832e24293448a4dc594  549  Create-Shortcuts.ps1
+824ab5c00c8f1e482498f1a07e0d19b462c900efbf09bb7dc741a7f09e8b13fc  18125  Dock.ps1
+b849b0a89c9d64db365ec90d80b500cbf2771817c0c8edea23e15c8f9360fe5e  38962  Launcher.ps1
+fb66bea8533cc0e716715e7d05939a530d13305cf67ba51573746a66b3ac96ac  2969  Remove-Legacy-Mercedes.ps1
+84ee7bd5f9392779bbd2be5005e0bb936c53a0536c0286f18123c9e5c3a965ae  1045  Restart-Mercedes-Controls.ps1
+cb768f2647e41be26bb92d08bc1e2f8246506d1fa039999d811ba437cdaa32e8  811  Restore-ExplorerShell.ps1
+571803fd639a2ec66df7e1fe7f1921ee7ad1e2e688f436d4157b94305e1827dc  5150  Save-Approved-Mercedes.ps1
+3d34cfcbd76833d6fbd5b9baf4803760b6aa9ca8918ce3af2940226f56045192  8270  SystemPanel.ps1
+71179b60644de4d64b66353036aad1fa6d8cc356d0b579cd3cd21e87985e90bc  3913  Uninstall.ps1
+cf97590a50d3616a06a603a83efa63e5563153d964111504b91d55c23361e9cc  28966  UpdateAgent.ps1
+57598439898e4d452ff378afc924f61878bc93ccf26d7ffd625bcaa0b0f895d9  5392  UpdateRunner.ps1
+d221e4b89bec34a1ff426e301ffee17cee515d94484a52ba14c7604ecb6785e8  761  Validate.ps1
+7e721f24fc1a3f20844ada2132900da45cf3afeb15ee763e43fa2aa57d057af9  1260  Watchdog.ps1
+63807e5bf296f13678a4e1014006a3af98d5fffffafe54feeb7f88fb671c14df  22208  WorkstationControls.ps1
+925e613647ef6bf4eea6a90ccdd3f116c7c8b173c39fee5111984443561dbf4b  2387968  WorkstationManager.exe
+92758c6d2b2d77ffc4fc9217f6b3c10c46da59f5ee2f687e9977b08ca1109cb5  4759  WorkstationShell.ps1
+9692d9bc8fea0731e1d68c4f5596783ff360c6cc2a9f48af4b8bdccec7234bab  233049  branding/mercedes.png
+c15fa7d6f05b67c1f540213846ca8e44ebe25d9c76184a9a47ac9c00166fde01  257  profile.json
+981da7a8e5d34cf8b2a6b7d1f6ef86e0c34fb67f2d4ebe87e6010bf4f8a75de2  26  version.json
+```
 
 ## Mercedes-Benz 0.1.3-beta.3 (built, voided, never published) — 2026-10-17
 
@@ -18,13 +58,13 @@ Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, 
 
 Changes since the prior Mercedes label `mercedes-v0.1.3-beta.2`:
 
-- Voided, never published: `WorkstationManager.exe` embedded all brand logos. `0.1.3-beta.4` is pending and is not pinned. The zip's only logo file is `branding/mercedes.png`.
+- Voided, never published: `WorkstationManager.exe` embedded all brand logos. `0.1.3-beta.4` is pinned in the catalog and is not published. The zip's only logo file is `branding/mercedes.png`.
 - `apps.json` is removed from the bundle and kept on the machine.
 - `WorkstationManager.exe` is the supervisor.
 - An existing `profile.json` is kept. A fresh install receives the bundle default.
 - Non-ASCII `.ps1` files that had no UTF-8 BOM get that BOM during packaging.
 
-`mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` are existing published prereleases with different bytes. They stay unpinned. `0.1.3-beta.3` was built from commit `7b6befdf` as workflow run 39087424705 and voided because `WorkstationManager.exe` embedded all brand logos. It was never tagged or published. `0.1.3-beta.4` is pending.
+`mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` are existing published prereleases with different bytes. They stay unpinned. `0.1.3-beta.3` was built from commit `7b6befdf` as workflow run 39087424705 and voided because `WorkstationManager.exe` embedded all brand logos. It was never tagged or published. `0.1.3-beta.4` is pinned in the catalog and is not published.
 
 Known issues: no VM test yet. DPI, multi-monitor, and Windows PowerShell 5.1 are not yet verified.
 
