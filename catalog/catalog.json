@@ -1,12 +1,15 @@
 {
   "schema": "diagnostic-workstation.catalog/v1",
-  "catalogSerial": 1,
-  "issuedUtc": "2026-10-17T22:00:00Z",
+  "catalogSerial": 2,
+  "issuedUtc": "2026-10-18T02:00:00Z",
   "expiresUtc": "2027-04-15T00:00:00Z",
   "signatureStatus": "placeholder-untrusted",
   "repo": "wilesy7404/diagnostic-workstation",
-  "retiredTagPrefixes": ["universal-v", "v"],
-  "note": "No mercedes-v or bmw-v payload is pinned yet. A GitHub release is downloaded only after its tag and workstation.zip SHA-256 are added here. universal-v and bare v tags stay retired. The old BMW v1.0.1-beta.5 core package is not an approved master bundle.",
+  "retiredTagPrefixes": [
+    "universal-v",
+    "v"
+  ],
+  "note": "bmw-v1.0.2-beta.1 is pinned from an Actions artifact. It is not published: no tag and no GitHub release yet. mercedes-v0.1.3-beta.3 was built as run 39087424705 and voided before it was tagged or published, because WorkstationManager.exe embedded all brand logos. It is not pinned. mercedes-v0.1.3-beta.4 is pending and is not pinned yet. mercedes-v0.1.3-beta.1 and mercedes-v0.1.3-beta.2 stay unpinned. universal-v and bare v tags stay retired. The old BMW v1.0.1-beta.5 core package is not an approved master bundle.",
   "brands": [
     {
       "id": "mercedes",
@@ -35,11 +38,23 @@
         "rootBase": "LOCALAPPDATA"
       },
       "supervisor": {
-        "entry": "WorkstationManager.exe",
+        "entry": "Watchdog.ps1",
         "transitionalEntry": "Watchdog.ps1",
-        "note": "BMW Watchdog migration is later and out of scope. This installer does not change BMW startup."
+        "note": "The BMW bundle supervisor is the transitional Watchdog.ps1. WorkstationManager.exe migration is later. This installer does not register Run or Winlogon startup."
       },
-      "releases": []
+      "releases": [
+        {
+          "tag": "bmw-v1.0.2-beta.1",
+          "version": "1.0.2-beta.1",
+          "channel": "beta",
+          "sha256": "77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978",
+          "bytes": 48955,
+          "manifestSha256": "82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136",
+          "manifestBytes": 2554,
+          "asset": "workstation.zip",
+          "manifestAsset": "update-manifest.json"
+        }
+      ]
     }
   ]
 }
