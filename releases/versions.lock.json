@@ -1,0 +1,79 @@
+{
+  "schema": "diagnostic-workstation.versions.lock/v1",
+  "appendOnly": true,
+  "note": "Append-only. Do not edit or remove an existing entry. Historical entries are not catalog pins and must not be re-minted.",
+  "entries": [
+    {
+      "brand": "bmw",
+      "version": "1.0.1-beta.5",
+      "contentDigest": null,
+      "zipSha256": "20e0f50cb73b72c5d3ebdcfe5302ac0b111916d01d6f9900bd5bc548e3c11cc3",
+      "manifestSha256": "ca0aaf2a7b9b703f2b6264787a9b07df3d83bcb77059df7a0732150e7ebbc620",
+      "sourceCommit": null,
+      "workflowRunId": null,
+      "historical": true,
+      "neverReMint": true,
+      "note": null
+    },
+    {
+      "brand": "mercedes",
+      "version": "0.1.2-beta.1",
+      "contentDigest": null,
+      "zipSha256": null,
+      "manifestSha256": null,
+      "sourceCommit": null,
+      "workflowRunId": null,
+      "historical": true,
+      "neverReMint": true,
+      "note": "hash not recorded"
+    },
+    {
+      "brand": "mercedes",
+      "version": "0.1.3-beta.1",
+      "contentDigest": null,
+      "zipSha256": "17a3a1d81d613db216e4a9b939ee7dccac0b8b1c7a19133fc4b02d0d911e5db2",
+      "manifestSha256": "fc1a063d9a78eef292a78e99e9c292f53c209927d7e734a2b49355739a33250f",
+      "sourceCommit": null,
+      "workflowRunId": null,
+      "historical": true,
+      "neverReMint": true,
+      "note": null
+    },
+    {
+      "brand": "mercedes",
+      "version": "0.1.3-beta.2",
+      "contentDigest": null,
+      "zipSha256": "be8fbfe5164ae8e511965d23f163644fb0166b6c7febffbc041d15e4a261d773",
+      "manifestSha256": "60c975f309428d7569058357f610afa323cb5c50400bc3a5115f6a548f529b82",
+      "sourceCommit": null,
+      "workflowRunId": null,
+      "historical": true,
+      "neverReMint": true,
+      "note": null
+    },
+    {
+      "brand": "mercedes",
+      "version": "0.1.3-beta.3",
+      "contentDigest": "af87858cc58bf0f66cd379ff88cdb07f9508b1e6490275a02cea9d483e58af67",
+      "zipSha256": "0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a",
+      "manifestSha256": "fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528",
+      "sourceCommit": "7b6befdfcb3d501a8b2f29b240adcb58df897fc5",
+      "workflowRunId": "39087424705",
+      "historical": false,
+      "neverReMint": false,
+      "note": null
+    },
+    {
+      "brand": "bmw",
+      "version": "1.0.2-beta.1",
+      "contentDigest": "e07829490aff1f4de7ae919fb9d2cd86f4ddc64ed684c5d1e14d1537753b5cd9",
+      "zipSha256": "77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978",
+      "manifestSha256": "82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136",
+      "sourceCommit": "7b6befdfcb3d501a8b2f29b240adcb58df897fc5",
+      "workflowRunId": "39087426283",
+      "historical": false,
+      "neverReMint": false,
+      "note": null
+    }
+  ]
+}
