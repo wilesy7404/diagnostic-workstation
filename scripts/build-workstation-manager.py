@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = ROOT / "manager"
 LOGOS = MANAGER / "logos"
-REQUIRED_GO = "go1.22.2"
+REQUIRED_GO = "go1.23.2"
 
 
 def sha256(data: bytes) -> str:
@@ -91,7 +91,10 @@ def stage_module(stage: Path, brand: str) -> None:
 def compile_to(brand: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     env = build_env()
-    ldflags = f"-buildid= -X main.embeddedBrand={brand}"
+    # Oct 14 flags were -H windowsgui -s -w -trimpath (GUI subsystem, no console,
+    # symbol table and DWARF omitted). -buildid= is added so a temp staging
+    # directory does not change the embedded build ID. -X sets the brand.
+    ldflags = f"-H windowsgui -s -w -buildid= -X main.embeddedBrand={brand}"
     with tempfile.TemporaryDirectory(prefix="wm-build-") as tmp:
         stage = Path(tmp) / "manager"
         stage_module(stage, brand)

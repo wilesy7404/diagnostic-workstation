@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22.2'
+          go-version: '1.23.2'
       - name: Compile WorkstationManager.exe twice and scan its logos
         shell: pwsh
         run: |
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22.2'
+          go-version: '1.23.2'
       - name: Install PowerShell
         shell: bash
         run: |
