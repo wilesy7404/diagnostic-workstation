@@ -4,8 +4,9 @@
 Source of the Oct 14 binary is handoff/2026-10-14/reference-packages/
 Diagnostic-Workstation-Master-Source-v1.2.zip (the same bytes as
 Diagnostic-Workstation-Master-Setup-v1.2.exe). This script stages one brand
-logo into assets/branding/ and builds with the deterministic Go flags the
-toolchain supports. The checked-in logos stay outside the embed tree.
+logo into assets/branding/ and builds with Go 1.23.2, -trimpath, and
+-ldflags "-H windowsgui -s -w -buildid= -X main.embeddedBrand=<brand>".
+The checked-in logos stay outside the embed tree.
 """
 
 from __future__ import annotations
