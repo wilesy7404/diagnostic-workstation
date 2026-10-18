@@ -97,11 +97,16 @@ function Get-WorkflowPowerShellRuns([string]$Path) {
 
 function Invoke-EngineParse([string]$Path, [string]$Shell, [string]$WindowsPowerShell) {
   if ($Shell -eq 'powershell' -and -not [string]::IsNullOrWhiteSpace($WindowsPowerShell)) {
-    & $WindowsPowerShell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -ParsePath $Path
-    if ($LASTEXITCODE -ne 0) { return $false }
+    $parseOutput = & $WindowsPowerShell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -ParsePath $Path 2>&1 | Out-String
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+      Write-Host $parseOutput
+      return $false
+    }
     return $true
   }
-  return (Test-OneFile $Path)
+  $parsed = Test-OneFile $Path
+  return $parsed
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
