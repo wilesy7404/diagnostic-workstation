@@ -45,10 +45,33 @@ jobs:
           }
           Write-Host 'Source checks passed. Runtime/UI testing still required.'
 
+  workstation-manager:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+      - name: Compile WorkstationManager.exe twice and scan its logos
+        shell: pwsh
+        run: |
+          Push-Location manager
+          go test -count=1 .
+          if ($LASTEXITCODE -ne 0) { throw 'manager brand guard tests failed' }
+          Pop-Location
+          $out = Join-Path $env:RUNNER_TEMP 'WorkstationManager.exe'
+          python scripts/build-workstation-manager.py mercedes $out --verify-reproducible
+          if ($LASTEXITCODE -ne 0) { throw 'WorkstationManager build failed' }
+          $env:WORKSTATION_MANAGER_EXE = $out
+          pwsh -NoProfile -File scripts/Test-WorkstationManagerLogo.ps1
+
   master-installer:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
       - name: Install PowerShell
         shell: bash
         run: |
@@ -65,3 +88,5 @@ jobs:
           pwsh -NoProfile -File scripts/Test-MasterInstaller.ps1
           pwsh -NoProfile -File scripts/Test-MercedesUpdater.ps1
           pwsh -NoProfile -File scripts/Test-BmwBundle.ps1
+          pwsh -NoProfile -File scripts/Test-WorkstationManagerLogo.ps1
+          (cd manager && go test -count=1 .)

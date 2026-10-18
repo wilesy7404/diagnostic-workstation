@@ -241,17 +241,17 @@ $workflow = Get-Content -LiteralPath (Join-Path $repo '.github/workflows/mercede
 Assert-True ($workflow -notmatch 'gh release') 'workflow publishes a release'
 Assert-True ($workflow -notmatch 'contents:\s*write') 'workflow requests write permission'
 Assert-True ($workflow -match 'workflow_dispatch') 'workflow is not manual'
-Assert-True ($workflow -match "default:\s*'0\.1\.3-beta\.3'") 'workflow default is not 0.1.3-beta.3'
+Assert-True ($workflow -match "default:\s*'0\.1\.3-beta\.4'") 'workflow default is not 0.1.3-beta.4'
 Assert-True ($workflow -notmatch 'inputs\.version \}\}"\s*=') 'workflow still hard-pins one version'
 
 $python = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $python) { throw 'python3 is required to build the bundle' }
-& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.3'
+& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.4'
 if ($LASTEXITCODE -ne 0) { throw 'bundle build failed' }
-$dist = Join-Path $repo 'dist/mercedes-v0.1.3-beta.3'
+$dist = Join-Path $repo 'dist/mercedes-v0.1.3-beta.4'
 $builtManifest = Get-Content -LiteralPath (Join-Path $dist 'update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-Assert-True ($builtManifest.tag -eq 'mercedes-v0.1.3-beta.3') 'bundle tag is wrong'
-Assert-True ($builtManifest.version -eq '0.1.3-beta.3') 'bundle version is wrong'
+Assert-True ($builtManifest.tag -eq 'mercedes-v0.1.3-beta.4') 'bundle tag is wrong'
+Assert-True ($builtManifest.version -eq '0.1.3-beta.4') 'bundle version is wrong'
 Assert-True (@($builtManifest.files).Count -eq 20) 'bundle does not contain 20 files'
 $logoNames = @($builtManifest.files | ForEach-Object { [string]$_.path } | Where-Object { $_ -like 'branding/*.png' })
 Assert-True ($logoNames.Count -eq 1 -and $logoNames[0] -eq 'branding/mercedes.png') 'bundle did not ship only the Mercedes logo'
@@ -267,12 +267,12 @@ try {
   [System.IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $dist 'workstation.zip'), $extract)
   $verified = Test-ManifestPackage $extract (Join-Path $dist 'update-manifest.json')
   Assert-RequiredPackageFiles $verified
-  Assert-ManifestIdentity $verified 'mercedes-v0.1.3-beta.3' 'mercedes-v'
+  Assert-ManifestIdentity $verified 'mercedes-v0.1.3-beta.4' 'mercedes-v'
   foreach ($name in @('apps.json','controls-pin.json','update-settings.json')) {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $extract $name))) "$name was packaged"
   }
   $packagedVersion = [System.IO.File]::ReadAllText((Join-Path $extract 'version.json'))
-  Assert-True ($packagedVersion -eq '{"version":"0.1.3-beta.3"}') 'version.json is not the canonical beta.3 file'
+  Assert-True ($packagedVersion -eq '{"version":"0.1.3-beta.4"}') 'version.json is not the canonical beta.4 file'
   $bundleScripts = @(Get-ChildItem -LiteralPath $extract -Recurse -Filter '*.ps1' -File)
   Assert-True ($bundleScripts.Count -gt 0) 'bundle has no scripts'
   foreach ($file in $bundleScripts) {
@@ -304,13 +304,13 @@ try {
   Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.4'
+& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.5'
 if ($LASTEXITCODE -ne 0) { throw 'parameterized bundle build failed' }
-$later = Join-Path $repo 'dist/mercedes-v0.1.3-beta.4'
+$later = Join-Path $repo 'dist/mercedes-v0.1.3-beta.5'
 $laterManifest = Get-Content -LiteralPath (Join-Path $later 'update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-Assert-True ($laterManifest.tag -eq 'mercedes-v0.1.3-beta.4') 'a later version still required a guard edit'
+Assert-True ($laterManifest.tag -eq 'mercedes-v0.1.3-beta.5') 'a later version still required a guard edit'
 $sourceVersion = [System.IO.File]::ReadAllText((Join-Path $source 'version.json'))
-Assert-True ($sourceVersion -eq '{"version":"0.1.3-beta.3"}') 'building another version rewrote source version.json'
+Assert-True ($sourceVersion -eq '{"version":"0.1.3-beta.4"}') 'building another version rewrote source version.json'
 Remove-Item -LiteralPath $later -Recurse -Force
 
 Write-Output 'Mercedes updater checks passed'

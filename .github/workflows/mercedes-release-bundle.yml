@@ -8,7 +8,7 @@ on:
       version:
         description: 'Mercedes version without the tag prefix'
         required: true
-        default: '0.1.3-beta.3'
+        default: '0.1.3-beta.4'
         type: string
 
 permissions:
@@ -16,10 +16,46 @@ permissions:
   actions: write
 
 jobs:
-  bundle:
-    runs-on: ubuntu-latest
+  manager:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+      - name: Compile WorkstationManager.exe from source
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Push-Location manager
+          go test -count=1 .
+          if ($LASTEXITCODE -ne 0) { throw 'manager brand guard tests failed' }
+          Pop-Location
+          python scripts/build-workstation-manager.py mercedes dist/WorkstationManager.exe --verify-reproducible
+          if ($LASTEXITCODE -ne 0) { throw 'WorkstationManager build failed' }
+      - name: Scan the exe for other brand logos
+        shell: pwsh
+        run: |
+          $env:WORKSTATION_MANAGER_EXE = Join-Path (Get-Location) 'dist/WorkstationManager.exe'
+          pwsh -NoProfile -File scripts/Test-WorkstationManagerLogo.ps1
+      - name: Upload compiled WorkstationManager.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: workstation-manager-exe
+          path: dist/WorkstationManager.exe
+          if-no-files-found: error
+
+  bundle:
+    needs: manager
+    runs-on: ubuntu-latest
+    env:
+      WORKSTATION_MANAGER_EXE: ${{ github.workspace }}/dist/WorkstationManager.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: workstation-manager-exe
+          path: dist
       - name: Check Mercedes updater scripts
         shell: bash
         run: |
@@ -29,6 +65,7 @@ jobs:
           tar -xzf /tmp/pwsh.tar.gz -C "$RUNNER_TEMP/pwsh"
           chmod +x "$RUNNER_TEMP/pwsh/pwsh"
           "$RUNNER_TEMP/pwsh/pwsh" -NoProfile -File scripts/Test-MercedesUpdater.ps1
+          "$RUNNER_TEMP/pwsh/pwsh" -NoProfile -File scripts/Test-WorkstationManagerLogo.ps1
       - name: Build workstation.zip and update-manifest.json
         shell: bash
         env:

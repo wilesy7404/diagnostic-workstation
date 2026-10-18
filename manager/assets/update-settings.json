@@ -1,0 +1,6 @@
+{
+  "channel": "beta",
+  "source": "public-github-releases",
+  "repo": "wilesy7404/diagnostic-workstation",
+  "tagPrefix": "universal-v"
+}
