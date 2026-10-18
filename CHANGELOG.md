@@ -1,10 +1,14 @@
 # Changelog
 
-BMW `1.0.2-beta.1` is pinned and not published. There is no tag and no GitHub release yet. Mercedes `0.1.3-beta.3` was built and then voided. It was never tagged or published, and it is not pinned. Mercedes `0.1.3-beta.4` is pending.
+BMW `1.0.2-beta.1` and Mercedes `0.1.3-beta.4` are pinned and not published. There is no tag and no GitHub release yet. Mercedes `0.1.3-beta.3` was built and then voided. It was never tagged or published, and it is not pinned.
 
-## Mercedes-Benz 0.1.3-beta.4 (pending, not pinned)
+## Mercedes-Benz 0.1.3-beta.4 (prerelease, catalog pin, not published) — 2026-10-18
 
-The Mercedes `WorkstationManager.exe` for this build is a Go module build (`go 1.23.2` with `godebug default=go1.20`). That module build matches the Oct 14 runtime GODEBUG defaults except `netedns0`, which this program does not use. Only the non-module rebuild of the unmodified v1.2 source reproduces `4981dc756c970e3a9bc4890f79a57cd0a525d525eb0da7ccfe050d3263a9c63f` byte for byte, and only when `-buildid` is the Oct 14 build ID. The module build does not. This exe embeds only `branding/mercedes.png`. The local and `windows-latest` double compile is SHA-256 `925e613647ef6bf4eea6a90ccdd3f116c7c8b173c39fee5111984443561dbf4b`, 2387968 bytes. It is not tagged, not released, and not pinned. The `4981dc75…` file listed under voided `0.1.3-beta.3` is that older all-logo binary, not this exe.
+Source commit `2b138bf07b0b083615a76a7c16da5e27f16b75e8`. Workflow run [39091982618](https://github.com/wilesy7404/diagnostic-workstation/actions/runs/39091982618). Catalog serial 3. Not tagged and not published.
+
+`workstation.zip` is 1321743 bytes, SHA-256 `ac8a82c0052cd1718cc050c5e28418efe5ed7afea104baaeb0940fcc612f661a`. `update-manifest.json` is 3338 bytes, SHA-256 `8c5d857933654bcbfa5bc84140c513d2c3d83863e2e3c0cf956c7471891abdc9`. contentDigest `b43616e9f62b1c254115eab33bbce36eeaf410b60e1de723f3125d18a5267779`. 20 files.
+
+The Mercedes `WorkstationManager.exe` in this zip is a Go module build (`go 1.23.2` with `godebug default=go1.20`), SHA-256 `925e613647ef6bf4eea6a90ccdd3f116c7c8b173c39fee5111984443561dbf4b`, 2387968 bytes. That module build matches the Oct 14 runtime GODEBUG defaults except `netedns0`, which this program does not use. Only the non-module rebuild of the unmodified v1.2 source reproduces `4981dc756c970e3a9bc4890f79a57cd0a525d525eb0da7ccfe050d3263a9c63f` byte for byte, and only when `-buildid` is the Oct 14 build ID. The module build does not. This exe embeds only `branding/mercedes.png`. The zip's only logo file is `branding/mercedes.png`. Compared with voided `0.1.3-beta.3` (run 39087424705), only `WorkstationManager.exe` and `version.json` differ.
 
 ## Mercedes-Benz 0.1.3-beta.3 (built, voided, never published) — 2026-10-17
 
