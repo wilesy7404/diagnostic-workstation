@@ -20,6 +20,8 @@ Each installation selects one profile, for example `brand.id= "bmw"`. The profil
 
 ### Current status
 
-**Repository scaffold only.** No verified production release or updater endpoint is published yet. Do not point installed clients at this repository as a working unattended update source until distribution, authentication, signing, rollback and restart handling are tested.
+The master installer in `installer/Master/` installs a catalog-pinned `mercedes-v*` or `bmw-v*` bundle into that brand's own folder and can fall back to an offline payload. `universal-v*` packages are retired. No approved brand ZIP is pinned in `catalog/catalog.json` yet, and placeholder signing keys are not production approval.
+
+Windows Update disable is wired to the vendored Sordum Windows Update Blocker. Windows Defender disable is a silent elevated step in the same installer: `Set-MpPreference` runs as SYSTEM through a transient scheduled task, and policy DWORDs are written in that elevated process. `WinDefend`, `WdNisSvc`, and `MDCoreSvc` are left running. See [master installer](docs/MASTER-INSTALLER.md).
 
 See [architecture](docs/ARCHITECTURE.md) and [release process](docs/RELEASES.md).

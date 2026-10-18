@@ -1,0 +1,4 @@
+tools/security/**/*.exe binary
+tools/security/**/*.ini binary
+tools/security/**/*.txt binary
+tools/security/**/*.md binary

@@ -1,0 +1,45 @@
+{
+  "schema": "diagnostic-workstation.catalog/v1",
+  "catalogSerial": 1,
+  "issuedUtc": "2026-10-17T22:00:00Z",
+  "expiresUtc": "2027-04-15T00:00:00Z",
+  "signatureStatus": "placeholder-untrusted",
+  "repo": "wilesy7404/diagnostic-workstation",
+  "retiredTagPrefixes": ["universal-v", "v"],
+  "note": "No mercedes-v or bmw-v payload is pinned yet. A GitHub release is downloaded only after its tag and workstation.zip SHA-256 are added here. universal-v and bare v tags stay retired. The old BMW v1.0.1-beta.5 core package is not an approved master bundle.",
+  "brands": [
+    {
+      "id": "mercedes",
+      "displayName": "Mercedes-Benz",
+      "tagPrefix": "mercedes-v",
+      "asset": "workstation.zip",
+      "manifestAsset": "update-manifest.json",
+      "install": {
+        "root": "DiagnosticWorkstation",
+        "rootBase": "LOCALAPPDATA"
+      },
+      "supervisor": {
+        "entry": "WorkstationManager.exe",
+        "note": "Single supervisor for every brand. This installer does not register Run or Winlogon startup."
+      },
+      "releases": []
+    },
+    {
+      "id": "bmw",
+      "displayName": "BMW",
+      "tagPrefix": "bmw-v",
+      "asset": "workstation.zip",
+      "manifestAsset": "update-manifest.json",
+      "install": {
+        "root": "BMW-Stealth-Launcher",
+        "rootBase": "LOCALAPPDATA"
+      },
+      "supervisor": {
+        "entry": "WorkstationManager.exe",
+        "transitionalEntry": "Watchdog.ps1",
+        "note": "BMW Watchdog migration is later and out of scope. This installer does not change BMW startup."
+      },
+      "releases": []
+    }
+  ]
+}
