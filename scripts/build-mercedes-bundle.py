@@ -9,10 +9,17 @@ encoder.
 
 import hashlib
 import json
+import os
 import re
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+import manager_resources
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "handoff" / "2026-10-14" / "live-source" / "Mercedes"
@@ -24,6 +31,7 @@ VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$")
 BETA3_VERSION_JSON_SHA256 = "9b20aa7d3c0e616e397c52213ea068a04544bf72d101d6e37dbdd3fc6d9a690a"
 BETA3_VERSION_JSON_BYTES = 26
 OWN_LOGO = "branding/mercedes.png"
+MANAGER_BRAND = "mercedes"
 CHANGED = {
     "Launcher.ps1",
     "UpdateRunner.ps1",
@@ -97,6 +105,29 @@ def packaged_version_json(version: str) -> bytes:
         source = (SOURCE / "version.json").read_bytes()
         if source != data:
             raise SystemExit("source version.json is not the canonical 0.1.3-beta.3 file")
+    return data
+
+
+def built_manager_bytes() -> bytes:
+    """Use the freshly compiled exe. Never the checked-in Oct 14 binary."""
+    override = os.environ.get("WORKSTATION_MANAGER_EXE", "").strip()
+    if override:
+        path = Path(override)
+        if not path.is_file():
+            raise SystemExit(f"WORKSTATION_MANAGER_EXE does not exist: {path}")
+        data = path.read_bytes()
+    else:
+        out = ROOT / "dist" / "WorkstationManager.exe"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        script = ROOT / "scripts" / "build-workstation-manager.py"
+        result = subprocess.run([sys.executable, str(script), MANAGER_BRAND, str(out)], check=False)
+        if result.returncode != 0:
+            raise SystemExit("WorkstationManager.exe build failed")
+        data = out.read_bytes()
+    problems = manager_resources.logo_problems(data, MANAGER_BRAND)
+    problems.extend(manager_resources.template_problems(data))
+    if problems:
+        raise SystemExit("refusing to package WorkstationManager.exe:\n" + "\n".join(problems))
     return data
 
 
@@ -213,6 +244,8 @@ def main(argv: list[str]) -> int:
     for path in paths:
         if path == "version.json":
             data = packaged_version_json(version)
+        elif path == "WorkstationManager.exe":
+            data = built_manager_bytes()
         else:
             data = read_source(path, zip_members, expected)
         if is_other_brand_logo(path):

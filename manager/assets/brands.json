@@ -1,0 +1,416 @@
+[
+  {
+    "id": "bmw",
+    "displayName": "BMW",
+    "short": "BMW",
+    "apps": [
+      {
+        "name": "ISTA+",
+        "path": "",
+        "icon": "",
+        "symbol": "BMW",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "ISTA D",
+        "path": "",
+        "icon": "",
+        "symbol": "BMW",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "E-Sys",
+        "path": "",
+        "icon": "",
+        "symbol": "BMW",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "INPA",
+        "path": "",
+        "icon": "",
+        "symbol": "BMW",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#45ADFF",
+    "accentSoft": "#9FD7FF",
+    "logo": "branding/bmw.png"
+  },
+  {
+    "id": "mercedes",
+    "displayName": "Mercedes-Benz",
+    "short": "MB",
+    "apps": [
+      {
+        "name": "XENTRY Diagnosis",
+        "path": "",
+        "icon": "",
+        "symbol": "MB",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "DTS Monaco",
+        "path": "",
+        "icon": "",
+        "symbol": "MB",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Vediamo",
+        "path": "",
+        "icon": "",
+        "symbol": "MB",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "WIS / ASRA",
+        "path": "",
+        "icon": "",
+        "symbol": "MB",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#BBC7D0",
+    "accentSoft": "#E6ECEF",
+    "logo": "branding/mercedes.png"
+  },
+  {
+    "id": "porsche",
+    "displayName": "Porsche",
+    "short": "P",
+    "apps": [
+      {
+        "name": "PIWIS",
+        "path": "",
+        "icon": "",
+        "symbol": "P",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "PETKA",
+        "path": "",
+        "icon": "",
+        "symbol": "P",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Porsche Service",
+        "path": "",
+        "icon": "",
+        "symbol": "P",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Other Application",
+        "path": "",
+        "icon": "",
+        "symbol": "P",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#CDA76E",
+    "accentSoft": "#F1D1A0",
+    "logo": "branding/porsche.png"
+  },
+  {
+    "id": "vw-audi",
+    "displayName": "Volkswagen / Audi",
+    "short": "VAG",
+    "apps": [
+      {
+        "name": "ODIS Service",
+        "path": "",
+        "icon": "",
+        "symbol": "VAG",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "ODIS Engineering",
+        "path": "",
+        "icon": "",
+        "symbol": "VAG",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "VCDS",
+        "path": "",
+        "icon": "",
+        "symbol": "VAG",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Other Application",
+        "path": "",
+        "icon": "",
+        "symbol": "VAG",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#6F8DE7",
+    "accentSoft": "#B2C5FF",
+    "logo": "branding/vw-audi.png"
+  },
+  {
+    "id": "toyota",
+    "displayName": "Toyota / Lexus",
+    "short": "T",
+    "apps": [
+      {
+        "name": "Techstream",
+        "path": "",
+        "icon": "",
+        "symbol": "T",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "GTS+",
+        "path": "",
+        "icon": "",
+        "symbol": "T",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Service Information",
+        "path": "",
+        "icon": "",
+        "symbol": "T",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Other Application",
+        "path": "",
+        "icon": "",
+        "symbol": "T",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#D84B5B",
+    "accentSoft": "#FF9AA0",
+    "logo": "branding/toyota.png"
+  },
+  {
+    "id": "ford",
+    "displayName": "Ford / Lincoln",
+    "short": "F",
+    "apps": [
+      {
+        "name": "FDRS",
+        "path": "",
+        "icon": "",
+        "symbol": "F",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "IDS",
+        "path": "",
+        "icon": "",
+        "symbol": "F",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "FORScan",
+        "path": "",
+        "icon": "",
+        "symbol": "F",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Other Application",
+        "path": "",
+        "icon": "",
+        "symbol": "F",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#4388CA",
+    "accentSoft": "#9BCBFA",
+    "logo": "branding/ford.png"
+  },
+  {
+    "id": "honda",
+    "displayName": "Honda / Acura",
+    "short": "H",
+    "apps": [
+      {
+        "name": "i-HDS",
+        "path": "",
+        "icon": "",
+        "symbol": "H",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "HDS",
+        "path": "",
+        "icon": "",
+        "symbol": "H",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Service Information",
+        "path": "",
+        "icon": "",
+        "symbol": "H",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Other Application",
+        "path": "",
+        "icon": "",
+        "symbol": "H",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#E75A5A",
+    "accentSoft": "#FFC0C0",
+    "logo": "branding/honda.png"
+  },
+  {
+    "id": "gm",
+    "displayName": "GM / Chevrolet",
+    "short": "GM",
+    "apps": [
+      {
+        "name": "GDS2",
+        "path": "",
+        "icon": "",
+        "symbol": "GM",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Techline Connect",
+        "path": "",
+        "icon": "",
+        "symbol": "GM",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "SPS2",
+        "path": "",
+        "icon": "",
+        "symbol": "GM",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Other Application",
+        "path": "",
+        "icon": "",
+        "symbol": "GM",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#DAAC53",
+    "accentSoft": "#FFE0A3",
+    "logo": "branding/gm.png"
+  },
+  {
+    "id": "jlr",
+    "displayName": "Jaguar Land Rover",
+    "short": "JLR",
+    "apps": [
+      {
+        "name": "Pathfinder",
+        "path": "",
+        "icon": "",
+        "symbol": "JLR",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "SDD",
+        "path": "",
+        "icon": "",
+        "symbol": "JLR",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "TOPIx",
+        "path": "",
+        "icon": "",
+        "symbol": "JLR",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      },
+      {
+        "name": "Other Application",
+        "path": "",
+        "icon": "",
+        "symbol": "JLR",
+        "enabled": true,
+        "description": "",
+        "showDescription": false
+      }
+    ],
+    "accent": "#65A687",
+    "accentSoft": "#A9D8C1",
+    "logo": "branding/jlr.png"
+  }
+]
