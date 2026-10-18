@@ -128,7 +128,7 @@ function Assert-NewLockRow($Row, [int]$Index, [string]$FieldKey) {
   }
   foreach ($name in @('contentDigest', 'zipSha256', 'manifestSha256')) {
     $value = $Row.$name
-    if ($value -isnot [string] -or -not ($value -cmatch '^[0-9a-f]{64}$')) {
+    if ($value -isnot [string] -or $value.Length -ne 64 -or -not ($value -cmatch '\A[0-9a-f]{64}\z')) {
       throw "versions.lock[$Index].$name must be 64 lowercase hex characters"
     }
   }
@@ -1045,6 +1045,9 @@ try {
     $badHash.$hashName = 'zz'
     Assert-Throws { Assert-NewLockRow $badHash 0 $newKey } "$hashName must be 64 lowercase hex"
   }
+  $newlineHash = New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10
+  $newlineHash.zipSha256 = ('b' * 64) + "`n"
+  Assert-Throws { Assert-NewLockRow $newlineHash 0 $newKey } 'zipSha256 must be 64 lowercase hex'
   $extraRow = New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10
   $extraRow | Add-Member -NotePropertyName extra -NotePropertyValue 1
   Assert-Throws { Assert-NewLockRow $extraRow 0 $newKey } 'fields changed'
@@ -1056,6 +1059,7 @@ try {
   # Local runs that are not pull requests fall back to the copy below. New rows after the baseline
   # must use the brand prefix plus the version, such as bmw-v1.0.3-beta.1.
   # contentDigest, zipSha256, and manifestSha256 must be 64 lowercase hex characters.
+  # The match is the whole string, so 64 hex characters plus a trailing newline is rejected.
   # Historical bare v tags stay inside the baseline and are exempt.
   $lock = Get-Content -LiteralPath (Join-Path $repo 'releases/versions.lock.json') -Raw | ConvertFrom-Json
   Assert-True ([string]$lock.schema -eq 'diagnostic-workstation.versions.lock/v1') 'versions lock schema'
