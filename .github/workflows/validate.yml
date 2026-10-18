@@ -55,6 +55,46 @@ jobs:
           & pwsh -NoProfile -File scripts/Test-WorkflowPowerShell.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  catalog-line-endings:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Force autocrlf before checkout
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config --global core.autocrlf true
+      - uses: actions/checkout@v4
+      - name: Assert catalog.json matches catalog.sha256
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $autocrlf = [string](git config --global --get core.autocrlf)
+          if ($autocrlf -ne 'true') { throw "core.autocrlf is '$autocrlf'" }
+          $pinText = [System.IO.File]::ReadAllText((Join-Path (Get-Location) 'catalog\catalog.sha256'))
+          $pin = (($pinText.Trim()) -split '\s+')[0].ToLowerInvariant()
+          $hash = (Get-FileHash -LiteralPath 'catalog\catalog.json' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $pin) { throw "catalog.json SHA-256 $hash does not match catalog.sha256 $pin" }
+          Write-Output "PASS catalog.json $hash matches catalog.sha256 under autocrlf=true"
+          $paths = @(
+            'catalog/catalog.json',
+            'catalog/catalog.sha256',
+            'catalog/catalog.json.release.sig',
+            'releases/versions.lock.json',
+            'tools/security/wub/tool-manifest.json',
+            'tools/security/wub/Wub_x64.exe',
+            'tools/security/wub/Wub.exe',
+            'tools/security/wub/Wub.ini',
+            'tools/security/wub/UPSTREAM-README.md'
+          )
+          foreach ($rel in $paths) {
+            $spec = 'HEAD:' + $rel
+            $blob = ([string](git rev-parse $spec)).Trim()
+            $work = ([string](git hash-object -- $rel)).Trim()
+            if ($work -ne $blob) { throw "$rel working tree $work does not match blob $blob" }
+            Write-Output "PASS $rel matches blob $blob"
+          }
+
   workstation-manager:
     runs-on: windows-latest
     timeout-minutes: 20

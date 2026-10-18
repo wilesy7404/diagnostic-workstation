@@ -340,7 +340,25 @@ try {
 
   $pin = Get-PinToken (Join-Path $repo 'catalog/catalog.sha256')
   $catalogHash = Get-Sha256Hex (Join-Path $repo 'catalog/catalog.json')
+  Assert-True ($pin -ceq 'c514717b22c24b68c2a445e08f02131e1f9fd62d600bcf292f88f8a4e1597aba') 'catalog.sha256 token changed'
   Assert-True ($pin -eq $catalogHash) 'catalog pin does not match catalog.json'
+  $catalogBytes = [System.IO.File]::ReadAllBytes((Join-Path $repo 'catalog/catalog.json'))
+  $catalogText = [System.Text.Encoding]::UTF8.GetString($catalogBytes)
+  Assert-True ($catalogText -notmatch "`r") 'catalog.json contains CR'
+  $crlfBytes = [System.Text.Encoding]::UTF8.GetBytes(($catalogText -replace "(?<!\r)`n", "`r`n"))
+  Assert-True ((Get-BytesSha256 $crlfBytes) -ne $pin) 'CRLF catalog.json must not satisfy the pin'
+  $attrText = (& git -C $repo check-attr text -- catalog/catalog.json catalog/catalog.sha256 catalog/catalog.json.release.sig releases/versions.lock.json tools/security/wub/tool-manifest.json tools/security/wub/Wub_x64.exe 2>&1 | Out-String)
+  foreach ($attrPath in @('catalog/catalog.json', 'catalog/catalog.sha256', 'catalog/catalog.json.release.sig', 'releases/versions.lock.json', 'tools/security/wub/tool-manifest.json', 'tools/security/wub/Wub_x64.exe')) {
+    Assert-True ($attrText -match [regex]::Escape("${attrPath}: text: unset")) "$attrPath is not byte-exact"
+  }
+  $harnessText = [System.IO.File]::ReadAllText((Join-Path $repo 'scripts/Invoke-VmInstallTest.ps1'))
+  Assert-True ($harnessText -notmatch '@\(\$script:Results\)') 'VM report still wraps the results list in @()'
+  Assert-True ($harnessText -match 'function Write-VmInstallReport') 'VM report is not written from a finally path'
+  Assert-True ($harnessText -match 'finally \{') 'VM harness does not keep the report writer in finally'
+  Assert-True ($harnessText -match 'Refusing to install an older approved version') 'downgrade check does not require the downgrade refusal'
+  Assert-True ($harnessText -match '\$expected = ''No approved''') 'unpinned check does not name its expected rejection'
+  Assert-True ($harnessText -match '\$expected = ''belongs to''') 'wrong-brand check does not name its expected rejection'
+  Assert-True ($harnessText -match 'expected ''hash mismatch''') 'tamper check does not name its expected rejection'
   $loadedCatalog = Read-ApprovedCatalog (Join-Path $repo 'catalog/catalog.json') (Join-Path $repo 'catalog/catalog.sha256') (Join-Path $repo 'keys') (Join-Path $repo 'catalog/catalog.json.release.sig')
   Assert-True ([int]$loadedCatalog.Catalog.catalogSerial -eq 3) 'catalog serial'
   Assert-True ([string]$loadedCatalog.Catalog.signatureStatus -eq 'placeholder-untrusted') 'catalog signature status'

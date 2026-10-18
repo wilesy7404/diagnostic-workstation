@@ -3,6 +3,8 @@ name: VM install test
 # Manual install test only. This workflow does not create a release, push a tag, or publish assets.
 # The catalog comes from catalog_ref. The harness script comes from the workflow commit,
 # so a catalog branch that does not yet contain this file can still be tested.
+# Checkout disables autocrlf and then checks catalog.json against catalog.sha256.
+# Downgrade is NOT RUN unless an older approved pin has offline/<tag>/ staged.
 on:
   workflow_dispatch:
     inputs:
@@ -31,6 +33,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
+      - name: Keep checkout bytes identical to the git blob
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config --global core.autocrlf false
+
       - name: Check out catalog ref
         uses: actions/checkout@v4
         with:
@@ -43,6 +51,16 @@ jobs:
           ref: ${{ github.sha }}
           path: vm-harness
           persist-credentials: false
+
+      - name: Verify the catalog pin survived checkout
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pinText = [System.IO.File]::ReadAllText('catalog\catalog.sha256')
+          $pin = (($pinText.Trim()) -split '\s+')[0].ToLowerInvariant()
+          $hash = (Get-FileHash -LiteralPath 'catalog\catalog.json' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $pin) { throw "catalog.json $hash does not match catalog.sha256 $pin" }
+          Write-Output "PASS catalog pin $hash"
 
       - name: Parse workflow scripts with Windows PowerShell 5.1
         shell: powershell
