@@ -20,22 +20,23 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne [System.Threadin
   throw 'Invoke-VmInstallTest.ps1 must run in an STA thread. Start it with powershell.exe -STA.'
 }
 
-$script:Results = New-Object System.Collections.Generic.List[object]
+$script:Results = @()
 $script:InstallerData = Join-Path $env:LOCALAPPDATA 'DiagnosticWorkstation-Installer'
 $script:JournalPath = Join-Path $script:InstallerData 'logs\install-journal.log'
 $script:PowershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $script:InstallTimeoutMs = 600000
 
 . (Join-Path $RepoRoot 'installer\Master\lib\Common.ps1')
+. (Join-Path $RepoRoot 'installer\Master\lib\Catalog.ps1')
 . (Join-Path $RepoRoot 'installer\Master\lib\Defender.ps1')
 
 function Add-Check([string]$Brand, [string]$Id, [string]$Status, [string]$Detail) {
-  $script:Results.Add([pscustomobject]@{
+  $script:Results += [pscustomobject]@{
     Brand = $Brand
     Id = $Id
     Status = $Status
     Detail = $Detail
-  }) | Out-Null
+  }
   Write-Output ("{0} {1} {2}: {3}" -f $Status, $Brand, $Id, $Detail)
 }
 
@@ -335,10 +336,11 @@ function Add-UnpinnedTagCheck([string]$BrandId, [string]$TagPrefix, [string]$Sou
   $result = Invoke-BrandInstall $BrandId $rejectedTag $SourcePath $logStem
   $rootExists = Test-Path -LiteralPath $Root
   $residue = Get-InstallResidue $Root
-  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $rootExists -or $result.Text -notmatch 'No approved' -or -not [string]::IsNullOrEmpty($residue)) {
-    Add-Check $BrandId 'unpinned-tag' 'FAIL' ("tag {0} exit {1} rootExists={2} residue='{3}'. {4}" -f $rejectedTag, $result.Code, $rootExists, $residue, $result.Text)
+  $expected = 'No approved'
+  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $rootExists -or $result.Text -notmatch $expected -or -not [string]::IsNullOrEmpty($residue)) {
+    Add-Check $BrandId 'unpinned-tag' 'FAIL' ("tag {0} exit {1} rootExists={2} residue='{3}'. expected '{4}'. {5}" -f $rejectedTag, $result.Code, $rootExists, $residue, $expected, $result.Text)
   } else {
-    Add-Check $BrandId 'unpinned-tag' 'PASS' ("unpinned tag {0} was rejected with exit {1}, the brand folder was not created, and no .staging-* leftover was present" -f $rejectedTag, $result.Code)
+    Add-Check $BrandId 'unpinned-tag' 'PASS' ("unpinned tag {0} was rejected with '{1}' and exit {2}, the brand folder was not created, and no .staging-* leftover was present" -f $rejectedTag, $expected, $result.Code)
   }
   Remove-InstallProgress
   Clear-BrandTree $Root
@@ -373,10 +375,11 @@ function Add-WrongTargetCheck([string]$BrandId, [string]$TagName, [string]$Sourc
   if (Test-Path -LiteralPath $lockPath) { $lockSame = (Get-HexSha256 $lockPath) -ceq $beforeLock }
   $unchanged = ($beforeTree -ceq $afterTree) -and ($beforeResidue -ceq $afterResidue) -and ($beforeSibling -ceq $afterSibling)
   $noStaging = [string]::IsNullOrEmpty($afterResidue)
-  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch 'belongs to' -or -not $stillForeign -or -not $lockSame -or -not $unchanged -or -not $noStaging) {
-    Add-Check $BrandId 'wrong-target' 'FAIL' ("foreign {0} marker exit {1} stillForeign={2} lockSame={3} unchanged={4} residue='{5}'. {6}" -f $foreign, $result.Code, $stillForeign, $lockSame, $unchanged, $afterResidue, $result.Text)
+  $expected = 'belongs to'
+  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch $expected -or -not $stillForeign -or -not $lockSame -or -not $unchanged -or -not $noStaging) {
+    Add-Check $BrandId 'wrong-target' 'FAIL' ("foreign {0} marker exit {1} stillForeign={2} lockSame={3} unchanged={4} residue='{5}'. expected '{6}'. {7}" -f $foreign, $result.Code, $stillForeign, $lockSame, $unchanged, $afterResidue, $expected, $result.Text)
   } else {
-    Add-Check $BrandId 'wrong-target' 'PASS' ("install into a {0} folder was rejected with exit {1}. The foreign tree and its pre-existing install-in-progress.lock stayed byte-identical, and no .staging-* leftover was present" -f $foreign, $result.Code)
+    Add-Check $BrandId 'wrong-target' 'PASS' ("install into a {0} folder was rejected with '{1}' and exit {2}. The foreign tree and its pre-existing install-in-progress.lock stayed byte-identical, and no .staging-* leftover was present" -f $foreign, $expected, $result.Code)
   }
   Remove-InstallProgress
   Clear-BrandTree $Root
@@ -435,14 +438,93 @@ function Add-InterruptedSwapCheck([string]$BrandId, [string]$TagName, [string]$S
   $residue = Get-InstallResidue $Root
   $sameTree = ($beforeTree -ceq $afterTree) -and ($beforeTree -ne 'MISSING')
   $clean = [string]::IsNullOrEmpty($residue)
-  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch 'restored' -or -not $sameTree -or -not $clean) {
-    Add-Check $BrandId 'interrupted-swap' 'FAIL' ("interrupted-swap recovery exit {0} sameTree={1} residue='{2}'. {3}" -f $result.Code, $sameTree, $residue, $result.Text)
+  $expected = 'restored'
+  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch $expected -or -not $sameTree -or -not $clean) {
+    Add-Check $BrandId 'interrupted-swap' 'FAIL' ("interrupted-swap recovery exit {0} sameTree={1} residue='{2}'. expected '{3}'. {4}" -f $result.Code, $sameTree, $residue, $expected, $result.Text)
   } else {
     Add-Check $BrandId 'interrupted-swap' 'PASS' ("an interrupted swap restored the previous tree byte for byte with exit {0}, including every file hash, and left no .prev-*, .failed-*, or .staging-* residue" -f $result.Code)
   }
   Get-ChildItem -LiteralPath $parent -Force -ErrorAction SilentlyContinue | Where-Object {
     $_.Name -like ($leaf + '.failed-*') -or $_.Name -like ($leaf + '.prev-*') -or $_.Name -like '.staging-*'
   } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+function Add-DowngradeCheck([string]$BrandId, [string]$InstalledTag, [string]$InstalledVersion, [string]$SourcePath, [string]$Root, $Releases) {
+  $markerPath = Join-Path $Root '.installed-bundle.json'
+  if (-not (Test-Path -LiteralPath $markerPath)) {
+    Add-Check $BrandId 'downgrade' 'NOT RUN' 'the pinned install did not create a marker, so an older version was not attempted'
+    return
+  }
+  $older = @()
+  foreach ($candidate in @($Releases)) {
+    if (-not $candidate) { continue }
+    $candidateTag = [string]$candidate.tag
+    $candidateVersion = [string]$candidate.version
+    if ([string]::IsNullOrWhiteSpace($candidateTag) -or $candidateTag -eq $InstalledTag) { continue }
+    try {
+      if ((Get-ReleaseRank $candidateVersion) -ge (Get-ReleaseRank $InstalledVersion)) { continue }
+    } catch { continue }
+    $older += $candidate
+  }
+  $chosen = $null
+  if ($older.Count -gt 0) {
+    $orderedOlder = @($older | Sort-Object -Property @{ Expression = { Get-ReleaseRank ([string]$_.version) }; Descending = $true })
+    foreach ($candidate in $orderedOlder) {
+      $candidateDir = Join-Path $SourcePath ([string]$candidate.tag)
+      $zipCandidate = Join-Path $candidateDir 'workstation.zip'
+      $manifestCandidate = Join-Path $candidateDir 'update-manifest.json'
+      if ((Test-Path -LiteralPath $zipCandidate) -and (Test-Path -LiteralPath $manifestCandidate)) {
+        $chosen = $candidate
+        break
+      }
+    }
+    if (-not $chosen) {
+      $tags = @()
+      foreach ($candidate in $orderedOlder) { $tags += [string]$candidate.tag }
+      Add-Check $BrandId 'downgrade' 'NOT RUN' ("older approved pin {0} is in the catalog but its bundle artifact was not staged, so the downgrade refusal was not attempted" -f ($tags -join ', '))
+      return
+    }
+  }
+  if (-not $chosen) {
+    $historical = @()
+    $lockPath = Join-Path $RepoRoot 'releases\versions.lock.json'
+    if (Test-Path -LiteralPath $lockPath) {
+      $lock = Read-JsonFile $lockPath
+      foreach ($entry in @($lock.entries)) {
+        if (-not $entry) { continue }
+        if ([string]$entry.brand -ne $BrandId) { continue }
+        $version = [string]$entry.version
+        if ([string]::IsNullOrWhiteSpace($version)) { continue }
+        try {
+          if ((Get-ReleaseRank $version) -ge (Get-ReleaseRank $InstalledVersion)) { continue }
+        } catch { continue }
+        $label = [string]$entry.tag
+        if ([string]::IsNullOrWhiteSpace($label)) { $label = $version }
+        $historical += $label
+        if ($historical.Count -ge 3) { break }
+      }
+    }
+    $detail = "catalog pins only $InstalledTag. No older approved release is pinned, and no older bundle artifact was staged, so the downgrade refusal was not attempted."
+    if ($historical.Count -gt 0) {
+      $detail = "catalog pins only $InstalledTag. No older approved release is pinned. Historical older rows ($($historical -join ', ')) are not approved pins and no older bundle artifact was staged, so the downgrade refusal was not attempted."
+    }
+    Add-Check $BrandId 'downgrade' 'NOT RUN' $detail
+    return
+  }
+  $beforeTree = Get-TreeFingerprint $Root
+  $beforeResidue = Get-InstallResidue $Root
+  $logStem = Join-Path $ReportDir ($BrandId + '-downgrade')
+  $result = Invoke-BrandInstall $BrandId ([string]$chosen.tag) $SourcePath $logStem
+  $afterTree = Get-TreeFingerprint $Root
+  $afterResidue = Get-InstallResidue $Root
+  $sameTree = ($beforeTree -ceq $afterTree) -and ($beforeTree -ne 'MISSING')
+  $sameResidue = ($beforeResidue -ceq $afterResidue)
+  $expected = 'Refusing to install an older approved version'
+  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch $expected -or -not $sameTree -or -not $sameResidue) {
+    Add-Check $BrandId 'downgrade' 'FAIL' ("tag {0} exit {1} sameTree={2} residueSame={3}. expected '{4}'. {5}" -f ([string]$chosen.tag), $result.Code, $sameTree, $sameResidue, $expected, $result.Text)
+  } else {
+    Add-Check $BrandId 'downgrade' 'PASS' ("older pin {0} was refused with '{1}', and the installed tree was unchanged" -f ([string]$chosen.tag), $expected)
+  }
 }
 
 function Get-ExpectedInstallExit($State) {
@@ -493,11 +575,19 @@ function Get-BrandReleases($Catalog, [string]$Brand) {
   }
 }
 
-function Get-XamlHereStrings([string]$Path) {
+function Get-PlaceholderValue([string]$Token, [string]$Expression) {
+  $color = [regex]::Match([string]$Expression, '[''"](?<color>#[0-9A-Fa-f]{8}|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3})[''"]')
+  if ($color.Success) { return [string]$color.Groups['color'].Value }
+  if ($Token -match '(?i)ACCENT|BRUSH|COLOR|FOREGROUND|BACKGROUND') { return '#FF00A0E0' }
+  return 'Placeholder'
+}
+
+function Get-PreparedXaml([string]$Path) {
+  $text = [System.IO.File]::ReadAllText($Path)
   $tokens = $null
-  $errors = $null
-  [void][System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors)
-  $found = New-Object System.Collections.Generic.List[string]
+  $parseErrors = $null
+  [void][System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
+  $prepared = @()
   foreach ($token in @($tokens)) {
     $kind = [string]$token.Kind
     if ($kind -ne 'HereStringLiteral' -and $kind -ne 'HereStringExpandable') { continue }
@@ -507,9 +597,34 @@ function Get-XamlHereStrings([string]$Path) {
     if ($lines.Count -lt 3) { continue }
     $inner = New-Object System.Collections.Generic.List[string]
     for ($n = 1; $n -lt ($lines.Count - 1); $n++) { $inner.Add($lines[$n]) | Out-Null }
-    $found.Add(($inner -join "`n")) | Out-Null
+    $region = ''
+    $end = [int]$token.Extent.EndOffset
+    if ($end -ge 0 -and $end -lt $text.Length) {
+      $rest = $text.Substring($end)
+      $load = [regex]::Match($rest, 'XamlReader\]::(Load|Parse)')
+      if ($load.Success) { $region = $rest.Substring(0, $load.Index) }
+    }
+    $subs = @()
+    $seen = @{}
+    $replaceCalls = [regex]::Matches($region, '\.Replace\(\s*([''"])(?<name>[^''"]+)\1\s*,\s*(?<expr>[^)]*)\)')
+    foreach ($call in @($replaceCalls)) {
+      $tokenName = [string]$call.Groups['name'].Value
+      if ([string]::IsNullOrWhiteSpace($tokenName)) { continue }
+      if ($seen.ContainsKey($tokenName)) { continue }
+      $seen[$tokenName] = $true
+      $subs += [pscustomobject]@{
+        Token = $tokenName
+        Value = (Get-PlaceholderValue $tokenName ([string]$call.Groups['expr'].Value))
+      }
+    }
+    $ordered = @($subs | Sort-Object -Property @{ Expression = { $_.Token.Length }; Descending = $true })
+    $snippet = ($inner -join "`n")
+    foreach ($sub in $ordered) {
+      $snippet = $snippet.Replace([string]$sub.Token, [string]$sub.Value)
+    }
+    $prepared += [pscustomobject]@{ Snippet = $snippet; Substitutions = $ordered }
   }
-  return $found
+  return $prepared
 }
 
 function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
@@ -519,6 +634,7 @@ function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
   $scriptCount = 0
   $xamlCount = 0
   $xamlFiles = New-Object System.Collections.Generic.List[string]
+  $xamlNotes = New-Object System.Collections.Generic.List[string]
   $xamlProblems = New-Object System.Collections.Generic.List[string]
   $apartment = [string][System.Threading.Thread]::CurrentThread.ApartmentState
   $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('vm-bundle-' + [guid]::NewGuid().ToString('n'))
@@ -541,16 +657,31 @@ function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
       if (@($errors).Count -gt 0) {
         $parseProblems.Add(('{0}: {1}' -f $name, [string]@($errors)[0].Message)) | Out-Null
       }
-      $snippets = @(Get-XamlHereStrings $temp)
-      if ($snippets.Count -gt 0) { $xamlFiles.Add($name) | Out-Null }
-      foreach ($snippet in $snippets) {
+      $prepared = @(Get-PreparedXaml $temp)
+      if ($prepared.Count -gt 0) { $xamlFiles.Add($name) | Out-Null }
+      $noteParts = @()
+      $noteSeen = @{}
+      foreach ($item in $prepared) {
+        foreach ($sub in @($item.Substitutions)) {
+          $label = ([string]$sub.Token) + '=' + ([string]$sub.Value)
+          if ($noteSeen.ContainsKey($label)) { continue }
+          $noteSeen[$label] = $true
+          $noteParts += $label
+        }
         $xamlCount++
         try {
           Add-Type -AssemblyName PresentationFramework
-          $ui = [System.Windows.Markup.XamlReader]::Parse($snippet)
+          $ui = [System.Windows.Markup.XamlReader]::Parse([string]$item.Snippet)
           if ($null -eq $ui) { throw 'XamlReader.Parse returned null' }
         } catch {
           $xamlProblems.Add(('{0}: {1}' -f $name, $_.Exception.Message)) | Out-Null
+        }
+      }
+      if ($prepared.Count -gt 0) {
+        if ($noteParts.Count -eq 0) {
+          $xamlNotes.Add(('{0}: no runtime .Replace placeholders' -f $name)) | Out-Null
+        } else {
+          $xamlNotes.Add(('{0}: substituted {1}' -f $name, ($noteParts -join ', '))) | Out-Null
         }
       }
     }
@@ -570,9 +701,9 @@ function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
   } elseif ($xamlCount -eq 0) {
     Add-Check $Brand 'xaml' 'FAIL' 'no .ps1 file in the bundle contains a WPF presentation here-string'
   } elseif ($xamlProblems.Count -gt 0) {
-    Add-Check $Brand 'xaml' 'FAIL' ("XamlReader.Parse failed without showing a window: {0}" -f ($xamlProblems -join '; '))
+    Add-Check $Brand 'xaml' 'FAIL' ("XamlReader.Parse failed without showing a window: {0}. {1}" -f (($xamlProblems -join '; '), ($xamlNotes -join '; ')))
   } else {
-    Add-Check $Brand 'xaml' 'PASS' ("STA XamlReader.Parse loaded {0} WPF here-strings from {1}. No window was shown." -f $xamlCount, ($xamlFiles -join ', '))
+    Add-Check $Brand 'xaml' 'PASS' ("STA XamlReader.Parse loaded {0} WPF here-strings from {1}. {2}. No window was shown." -f $xamlCount, ($xamlFiles -join ', '), ($xamlNotes -join '; '))
   }
 }
 
@@ -581,10 +712,60 @@ function Add-DpiCheck {
   Add-Check 'host' 'dpi-multimonitor' 'NOT PROVEN' 'DPI and multi-monitor layout are not proven on a headless hosted runner. This run does not change session scaling.'
 }
 
+function Write-VmInstallReport {
+  $reportPath = Join-Path $ReportDir 'vm-install-test-report.md'
+  try {
+    $failCount = 0
+    $passCount = 0
+    $unprovenCount = 0
+    $notRunCount = 0
+    foreach ($row in $script:Results) {
+      if ($row.Status -eq 'FAIL') { $failCount++ }
+      elseif ($row.Status -eq 'PASS') { $passCount++ }
+      elseif ($row.Status -eq 'NOT PROVEN') { $unprovenCount++ }
+      elseif ($row.Status -eq 'NOT RUN') { $notRunCount++ }
+    }
+    $resultWord = 'PASS'
+    if ($failCount -gt 0 -or $script:HarnessFault) { $resultWord = 'FAIL' }
+    $lines = @()
+    $lines += '# VM install test report'
+    $lines += ''
+    $lines += ('Result: {0}' -f $resultWord)
+    $lines += ('PASS {0}, FAIL {1}, NOT PROVEN {2}, NOT RUN {3}' -f @($passCount, $failCount, $unprovenCount, $notRunCount))
+    $lines += ('Windows PowerShell {0}' -f $PSVersionTable.PSVersion.ToString())
+    $lines += ('Computer: {0}' -f $env:COMPUTERNAME)
+    $lines += ('Catalog ref: {0}' -f $CatalogRef)
+    $lines += ('Mercedes artifact run: {0}' -f $MercedesRunId)
+    $lines += ('BMW artifact run: {0}' -f $BmwRunId)
+    $lines += ''
+    $lines += 'NOT PROVEN is not a pass. NOT RUN means that brand has no catalog pin, or an older bundle artifact was not staged. A hosted runner cannot show reboot or logon startup, Tamper Protection, or interactive UI. DPI awareness is NOT PROVEN because the launcher process is not started. Defender and Windows Update end state are NOT PROVEN when the runner image does not expose them. The in-install swap catch is NOT PROVEN here because Install-Master.ps1 clears the test-only hook before elevation. Downgrade is NOT RUN when the catalog has no older approved pin or that pin has no staged bundle.'
+    $lines += ''
+    $lines += '## Checks'
+    $lines += ''
+    foreach ($row in $script:Results) {
+      $lines += ('- {0} {1} {2}: {3}' -f @($row.Status, $row.Brand, $row.Id, $row.Detail))
+      $lines += ''
+    }
+    if ($script:HarnessFault) {
+      $lines += ('Harness fault: {0}' -f $script:HarnessFault)
+      $lines += ''
+    }
+    $text = ($lines -join "`r`n") + "`r`n"
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($reportPath, $text, $utf8)
+  } catch {
+    $fallback = "VM install test report`r`n`r`nThe report writer failed: " + $_.Exception.Message + "`r`n"
+    [System.IO.File]::WriteAllText($reportPath, $fallback)
+  }
+}
+
 $plan = Get-DefenderControlPlan
 New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null
 $transcript = Join-Path $ReportDir 'transcript.txt'
 try { Start-Transcript -LiteralPath $transcript -Force | Out-Null } catch { }
+
+$script:HarnessFault = $null
+try {
 
 Add-Check 'host' 'reboot-logon' 'NOT PROVEN' 'A hosted runner does not reboot or start a new logon session, so startup-at-logon is not proven. Registry before and after the install is a separate check.'
 Add-Check 'host' 'tamper-protection' 'NOT PROVEN' 'Tamper Protection behavior is not proven. Hosted runner images usually have it off or unmanaged, and an interactive Tamper Protection prompt cannot be answered here.'
@@ -619,13 +800,11 @@ foreach ($brand in $brands) {
   $releases = @(Get-BrandReleases $catalog $id)
   if ($releases.Count -eq 0) {
     Add-Check $id 'pin' 'NOT RUN' 'No approved release is pinned. This brand is skipped until a catalog pin exists.'
+    Add-Check $id 'downgrade' 'NOT RUN' 'No approved release is pinned, so an older version was not attempted.'
     continue
   }
-  if ($releases.Count -ne 1) {
-    Add-Check $id 'pin' 'FAIL' ("catalog pins {0} releases. This harness tests one pinned tag per brand." -f $releases.Count)
-    continue
-  }
-  $release = $releases[0]
+  $ranked = @($releases | Sort-Object -Property @{ Expression = { Get-ReleaseRank ([string]$_.version) }; Descending = $true })
+  $release = $ranked[0]
   $tag = [string]$release.tag
   $pinnedVersion = [string]$release.version
   $root = Resolve-BrandInstallRoot $id
@@ -651,6 +830,7 @@ foreach ($brand in $brands) {
       Add-Check $id 'e' 'FAIL' 'Skipped. The offline payload is missing.'
       Add-Check $id 'f' 'FAIL' 'Skipped. The offline payload is missing.'
       Add-Check $id 'g' 'FAIL' 'Skipped. The offline payload is missing.'
+      Add-Check $id 'downgrade' 'NOT RUN' 'the pinned payload is missing, so an older version was not attempted'
       continue
     }
     $zipHash = Get-HexSha256 $zipPath
@@ -699,10 +879,10 @@ foreach ($brand in $brands) {
       Add-Check $id 'b' 'FAIL' ("tampered zip was not rejected. exit={0} rootExists={1}" -f $tamperCode, $rootAfterTamper)
     } elseif ($tamperCode -eq -1) {
       Add-Check $id 'b' 'FAIL' 'tampered install timed out. Interactive UI is not proven, and the negative test did not finish.'
-    } elseif ($tamperErr -notmatch '(?i)hash mismatch|checksum mismatch|package size mismatch') {
-      Add-Check $id 'b' 'FAIL' ("tampered install exit {0} did not report a hash rejection. {1}" -f $tamperCode, ($tamperErr -replace '\s+', ' ').Trim())
+    } elseif ($tamperErr -notmatch 'hash mismatch') {
+      Add-Check $id 'b' 'FAIL' ("tampered install exit {0} did not report a hash mismatch. expected 'hash mismatch'. {1}" -f $tamperCode, ($tamperErr -replace '\s+', ' ').Trim())
     } else {
-      Add-Check $id 'b' 'PASS' ("one flipped zip byte was rejected with exit {0} and the brand folder was not created" -f $tamperCode)
+      Add-Check $id 'b' 'PASS' ("one flipped zip byte was rejected with 'hash mismatch' and exit {0}, and the brand folder was not created" -f $tamperCode)
     }
     Clear-BrandTree $root
 
@@ -750,6 +930,7 @@ foreach ($brand in $brands) {
     }
     Add-CombinedCheck $id 'a' $a
     Add-ExtraFilesCheck $id $root $manifest
+    Add-DowngradeCheck $id $tag $pinnedVersion $offlineParent $root $releases
 
     $c = @()
     $bundleProfilePath = Join-Path $ReportDir ($id + '-bundle-profile.json')
@@ -1058,31 +1239,17 @@ try {
   Add-Check 'host' 'log-copy' 'FAIL' $_.Exception.Message
 }
 
-$failCount = @($script:Results | Where-Object { $_.Status -eq 'FAIL' }).Count
-$passCount = @($script:Results | Where-Object { $_.Status -eq 'PASS' }).Count
-$unprovenCount = @($script:Results | Where-Object { $_.Status -eq 'NOT PROVEN' }).Count
-$notRunCount = @($script:Results | Where-Object { $_.Status -eq 'NOT RUN' }).Count
-$summary = New-Object System.Collections.Generic.List[string]
-$summary.Add('# VM install test report')
-$summary.Add('')
-$summary.Add(('Result: {0}' -f $(if ($failCount -gt 0) { 'FAIL' } else { 'PASS' })))
-$summary.Add(('PASS {0}, FAIL {1}, NOT PROVEN {2}, NOT RUN {3}' -f $passCount, $failCount, $unprovenCount, $notRunCount))
-$summary.Add(('Windows PowerShell {0}' -f $PSVersionTable.PSVersion.ToString()))
-$summary.Add(('Computer: {0}' -f $env:COMPUTERNAME))
-$summary.Add(('Catalog ref: {0}' -f $CatalogRef))
-$summary.Add(('Mercedes artifact run: {0}' -f $MercedesRunId))
-$summary.Add(('BMW artifact run: {0}' -f $BmwRunId))
-$summary.Add('')
-$summary.Add('NOT PROVEN is not a pass. NOT RUN means that brand has no catalog pin and was skipped. A hosted runner cannot show reboot or logon startup, Tamper Protection, or interactive UI. DPI awareness is NOT PROVEN because the launcher process is not started. Defender and Windows Update end state are NOT PROVEN when the runner image does not expose them. The in-install swap catch is NOT PROVEN here because Install-Master.ps1 clears the test-only hook before elevation.')
-$summary.Add('')
-$summary.Add('## Checks')
-$summary.Add('')
-foreach ($row in @($script:Results)) {
-  $summary.Add(('- {0} `{1} {2}`: {3}' -f $row.Status, $row.Brand, $row.Id, $row.Detail))
-  $summary.Add('')
+} catch {
+  $script:HarnessFault = [string]$_.Exception.Message
+  try { Add-Check 'host' 'harness' 'FAIL' $script:HarnessFault } catch { }
+} finally {
+  Write-VmInstallReport
+  try { Stop-Transcript | Out-Null } catch { }
 }
-$reportPath = Join-Path $ReportDir 'vm-install-test-report.md'
-[System.IO.File]::WriteAllText($reportPath, ($summary -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding $false))
-try { Stop-Transcript | Out-Null } catch { }
-if ($failCount -gt 0) { exit 1 }
+
+$failCount = 0
+foreach ($row in $script:Results) {
+  if ($row.Status -eq 'FAIL') { $failCount++ }
+}
+if ($script:HarnessFault -or $failCount -gt 0) { exit 1 }
 exit 0

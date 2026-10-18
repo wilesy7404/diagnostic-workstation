@@ -4,3 +4,10 @@ tools/security/**/*.txt binary
 tools/security/**/*.md binary
 manager/** text eol=lf
 manager/logos/*.png binary
+# Byte-exact pins. core.autocrlf must not rewrite these on checkout.
+# catalog/catalog.json is hashed against catalog/catalog.sha256 at install time.
+# releases/versions.lock.json is the append-only pin ledger.
+# tools/security/wub/tool-manifest.json is the pin record for the hashed WUB binaries and sidecars.
+catalog/** -text
+releases/versions.lock.json -text
+tools/security/wub/tool-manifest.json -text

@@ -18,7 +18,7 @@ If the download fails, the installer looks in `-Source <folder>` and in `offline
 
 `catalog/catalog.json` pins `bmw-v1.0.2-beta.1` and `mercedes-v0.1.3-beta.4` (channel beta). Neither build is published: no tag and no GitHub release yet, and the repository has no `offline/<tag>/` copy. An install of either pin therefore stops with `No offline payload was found` until the release assets exist, and it does not create the brand folder. `mercedes-v0.1.3-beta.3` was voided and is not pinned. `mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` stay unpinned. A brand with an empty release list stops with `No approved <brand> release is pinned`.
 
-`keys/qa.pub` and `keys/release.pub` are placeholders. The catalog pin is a checksum of the catalog file, not an Ed25519 signature. A catalog that claims `release-signed` is rejected. Real key custody is a later step.
+`keys/qa.pub` and `keys/release.pub` are placeholders. The catalog pin is a checksum of the catalog file, not an Ed25519 signature. A catalog that claims `release-signed` is rejected. Real key custody is a later step. `catalog/**` is marked `-text` in `.gitattributes`, so a Windows checkout with `core.autocrlf=true` keeps the git blob bytes. The installer hashes those bytes and does not normalize line endings.
 
 ## Where files go
 
