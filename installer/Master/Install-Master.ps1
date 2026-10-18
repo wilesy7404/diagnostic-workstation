@@ -30,6 +30,10 @@ $masterDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 if ($Library -or $env:MASTER_INSTALLER_LIBRARY -eq '1') { return }
 
+# Library tests set DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP=1 to fail inside Install-VerifiedTree.
+# Delete it before elevation so this process and the relaunch cannot arm that hook.
+[Environment]::SetEnvironmentVariable('DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP', $null, 'Process')
+
 if ([string]::IsNullOrWhiteSpace($Brand)) {
   throw 'Pass -Brand mercedes or -Brand bmw. Nothing was installed.'
 }

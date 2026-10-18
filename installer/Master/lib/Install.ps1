@@ -180,7 +180,32 @@ function Repair-InterruptedInstall {
     throw 'Interrupted install left an unmarked root. Nothing was installed.'
   }
   Remove-Item -LiteralPath $ProgressPath -Force
-  if ($restored) { throw 'Recovered an interrupted install. Previous files were restored. Nothing new was installed.' }
+  if ($restored) {
+    if (Test-Path -LiteralPath $root -PathType Container) {
+      $failedRepair = $root + '.failed-repair'
+      if (Test-Path -LiteralPath $failedRepair) { Remove-Item -LiteralPath $failedRepair -Recurse -Force }
+    }
+    throw 'Recovered an interrupted install. Previous files were restored. Nothing new was installed.'
+  }
+}
+
+function Assert-InstallTargetAllowed {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$Brand,
+    [Parameter(Mandatory = $true)][string]$Version,
+    [switch]$AllowDowngrade
+  )
+  $existing = $null
+  if (Test-Path -LiteralPath $Root -PathType Container) { $existing = Read-InstalledMarker $Root }
+  if ($existing -and [string]$existing.brand -and [string]$existing.brand -ne $Brand) {
+    throw "Install root belongs to $($existing.brand). Nothing was installed."
+  }
+  if ($existing -and [string]$existing.version -and -not $AllowDowngrade) {
+    if ((Get-ReleaseRank $Version) -lt (Get-ReleaseRank ([string]$existing.version))) {
+      throw 'Refusing to install an older approved version. Nothing was installed.'
+    }
+  }
 }
 
 function Install-VerifiedTree {
@@ -198,16 +223,7 @@ function Install-VerifiedTree {
   $parent = Split-Path -Parent $Root
   if ([string]::IsNullOrWhiteSpace($parent)) { throw 'Install root has no parent. Nothing was installed.' }
   if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-  $existing = $null
-  if (Test-Path -LiteralPath $Root -PathType Container) { $existing = Read-InstalledMarker $Root }
-  if ($existing -and [string]$existing.brand -and [string]$existing.brand -ne $Brand) {
-    throw "Install root belongs to $($existing.brand). Nothing was installed."
-  }
-  if ($existing -and [string]$existing.version -and -not $AllowDowngrade) {
-    if ((Get-ReleaseRank $Version) -lt (Get-ReleaseRank ([string]$existing.version))) {
-      throw 'Refusing to install an older approved version. Nothing was installed.'
-    }
-  }
+  Assert-InstallTargetAllowed -Root $Root -Brand $Brand -Version $Version -AllowDowngrade:$AllowDowngrade
   $leaf = Split-Path -Leaf $Root
   $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
   $prevLeaf = '{0}.prev-{1}' -f $leaf, $stamp
@@ -220,6 +236,10 @@ function Install-VerifiedTree {
   if ($existed) { Copy-PreservedTree $Root $Staging }
   if ($existed) { Rename-Item -LiteralPath $Root -NewName $prevLeaf }
   try {
+    # Library test hook. Install-Master.ps1 deletes this variable before elevation, so a production run cannot set it.
+    if ($env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP -eq '1') {
+      throw 'test-only failure during install swap'
+    }
     Rename-Item -LiteralPath $Staging -NewName $leaf
     $marker = [ordered]@{
       schema = 'diagnostic-workstation.installed-bundle/v1'
@@ -309,17 +329,22 @@ function Install-ApprovedBrand {
   $catalogBrand = Get-CatalogBrand $loaded.Catalog $Brand
   $releaseMeta = Read-BrandReleaseFile (Join-MasterPath $RepoRoot @('brands', $Brand, 'release.json')) $Brand $catalogBrand
   $release = Select-ApprovedRelease $catalogBrand $Brand $Channel $Tag
-  Add-MasterJournal $LogDirectory ([pscustomobject]@{
-    step = 'release-selected'; brand = $Brand; tag = [string]$release.tag; version = [string]$release.version; channel = $Channel
-  })
-
-  $work = Join-Path -Path $InstallerData -ChildPath ('work-' + [guid]::NewGuid().ToString('n'))
-  New-Item -ItemType Directory -Force -Path $work | Out-Null
-  $parent = Split-Path -Parent $root
-  if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-  $staging = Join-Path -Path $parent -ChildPath ('.staging-{0}-{1}' -f $Brand, [guid]::NewGuid().ToString('n'))
+  $lockHeld = $false
+  $work = $null
+  $staging = $null
   $payload = $null
   try {
+    # Refuse a foreign brand or a downgrade before any extract, staging directory, lock, or supervisor stop.
+    Assert-InstallTargetAllowed -Root $root -Brand $Brand -Version ([string]$release.version) -AllowDowngrade:$AllowDowngrade
+    Add-MasterJournal $LogDirectory ([pscustomobject]@{
+      step = 'release-selected'; brand = $Brand; tag = [string]$release.tag; version = [string]$release.version; channel = $Channel
+    })
+
+    $work = Join-Path -Path $InstallerData -ChildPath ('work-' + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    $parent = Split-Path -Parent $root
+    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $staging = Join-Path -Path $parent -ChildPath ('.staging-{0}-{1}' -f $Brand, [guid]::NewGuid().ToString('n'))
     $payload = Receive-ApprovedPayload -Brand $Brand -Release $release -Source $Source -RepoRoot $RepoRoot -OfflineOnly:$OfflineOnly -WorkDirectory $work -Downloader $Downloader
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'payload-acquired'; source = $payload.Source; brand = $Brand; tag = [string]$release.tag })
     $manifest = Open-VerifiedBundle -Brand $Brand -Release $release -ZipPath $payload.Zip -ManifestPath $payload.Manifest -Staging $staging
@@ -333,15 +358,19 @@ function Install-ApprovedBrand {
       }
     }
     Assert-InstallSpace $root ([int64]$release.bytes)
+    # Re-check immediately before the lock. A foreign or older target still must not be locked or stopped.
+    Assert-InstallTargetAllowed -Root $root -Brand $Brand -Version ([string]$release.version) -AllowDowngrade:$AllowDowngrade
     # Hold the lock before the rename. WorkstationManager will not start a new PowerShell
     # while it exists. The renamed previous folder takes this copy with it, so the new
     # root gets a fresh lock before Windows Update or Defender run.
-    Set-BrandInstallLock $root | Out-Null
+    $heldLock = Set-BrandInstallLock $root
+    if (-not [string]::IsNullOrWhiteSpace([string]$heldLock)) { $lockHeld = $true }
     $stopped = @()
     if (-not $AllowUncheckedProcesses) { $stopped = @(Stop-BrandSupervisorProcesses -Root $root) }
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'supervisor-held'; brand = $Brand; stopped = @($stopped) })
     Install-VerifiedTree -Staging $staging -Root $root -Brand $Brand -Tag ([string]$release.tag) -Version ([string]$release.version) -ZipSha256 ([string]$release.sha256) -ProgressPath $progress -AllowDowngrade:$AllowDowngrade
-    Set-BrandInstallLock $root | Out-Null
+    $heldLock = Set-BrandInstallLock $root
+    if (-not [string]::IsNullOrWhiteSpace([string]$heldLock)) { $lockHeld = $true }
     if (-not $AllowUncheckedProcesses) { Stop-BrandSupervisorProcesses -Root $root | Out-Null }
     Write-TrustState $trust ([int]$loaded.Catalog.catalogSerial) $loaded.Digest
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'installed'; brand = $Brand; root = $root; tag = [string]$release.tag })
@@ -363,8 +392,8 @@ function Install-ApprovedBrand {
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'failed'; brand = $Brand; message = $_.Exception.Message })
     throw
   } finally {
-    if (-not $VerifyOnly) { Remove-BrandInstallLock $root }
-    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
-    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($lockHeld) { Remove-BrandInstallLock $root }
+    if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($work -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
   }
 }

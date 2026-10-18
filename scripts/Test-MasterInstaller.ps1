@@ -454,6 +454,57 @@ try {
   } 'No approved bmw release is pinned'
   Assert-True (-not (Test-Path -LiteralPath $emptyBmwRoot)) 'empty bmw catalog created an install root'
 
+  $savedLock = ${function:Set-BrandInstallLock}
+  $savedStop = ${function:Stop-BrandSupervisorProcesses}
+  $script:TargetGuardCalls = New-Object System.Collections.Generic.List[string]
+  ${function:Set-BrandInstallLock} = { param($Root) $script:TargetGuardCalls.Add('lock') | Out-Null; return $null }
+  ${function:Stop-BrandSupervisorProcesses} = { param($Root, $ProcessQuery, $ProcessStop) $script:TargetGuardCalls.Add('stop') | Out-Null; return @() }
+  try {
+    Assert-True ((${function:Set-BrandInstallLock}.ToString()) -match 'TargetGuardCalls') 'lock override was not installed'
+    $foreignApproved = Join-Path $temp 'foreign-approved'
+    New-Item -ItemType Directory -Path $foreignApproved | Out-Null
+    Write-Utf8NoBom (Join-Path $foreignApproved '.installed-bundle.json') '{"brand":"bmw","version":"1.0.0"}'
+    Write-Utf8NoBom (Join-Path $foreignApproved 'Launcher.ps1') "Write-Output 'foreign-live'`n"
+    $foreignLock = [System.Text.Encoding]::UTF8.GetBytes("other-run lock`n")
+    [System.IO.File]::WriteAllBytes((Join-Path $foreignApproved 'install-in-progress.lock'), $foreignLock)
+    Assert-Throws {
+      Install-ApprovedBrand -Brand 'mercedes' -AllowTestRoot -InstallRoot $foreignApproved -InstallerData (Join-Path $temp 'foreign-approved-data') -LogDirectory (Join-Path $temp 'foreign-approved-logs') -RepoRoot $fixture -OfflineOnly
+    } 'belongs to bmw'
+    Assert-True ($script:TargetGuardCalls.Count -eq 0) ("wrong target reached {0}" -f ($script:TargetGuardCalls -join ','))
+    $foreignLockAfter = [System.IO.File]::ReadAllBytes((Join-Path $foreignApproved 'install-in-progress.lock'))
+    Assert-True ((Get-BytesSha256 $foreignLock) -eq (Get-BytesSha256 $foreignLockAfter) -and $foreignLock.Length -eq $foreignLockAfter.Length) 'wrong target changed a pre-existing lock'
+    Assert-True (([System.IO.File]::ReadAllText((Join-Path $foreignApproved 'Launcher.ps1'))) -match 'foreign-live') 'wrong target changed the foreign tree'
+    Assert-True (@(Get-ChildItem -LiteralPath (Split-Path -Parent $foreignApproved) -Force | Where-Object { $_.Name -like '.staging-*' }).Count -eq 0) 'wrong target left a staging directory'
+    $foreignJournal = Join-Path $temp 'foreign-approved-logs/install-journal.log'
+    if (Test-Path -LiteralPath $foreignJournal) {
+      $foreignJournalText = [System.IO.File]::ReadAllText($foreignJournal)
+      Assert-True ($foreignJournalText -notmatch 'payload-acquired') 'wrong target extracted a payload'
+    }
+    $downgradeApproved = Join-Path $temp 'downgrade-approved'
+    New-Item -ItemType Directory -Path $downgradeApproved | Out-Null
+    Write-Utf8NoBom (Join-Path $downgradeApproved '.installed-bundle.json') '{"brand":"mercedes","version":"9.0.0"}'
+    Write-Utf8NoBom (Join-Path $downgradeApproved 'Launcher.ps1') "Write-Output 'newer-live'`n"
+    $downgradeLock = [System.Text.Encoding]::UTF8.GetBytes("other-run lock`n")
+    [System.IO.File]::WriteAllBytes((Join-Path $downgradeApproved 'install-in-progress.lock'), $downgradeLock)
+    $script:TargetGuardCalls.Clear()
+    Assert-Throws {
+      Install-ApprovedBrand -Brand 'mercedes' -AllowTestRoot -InstallRoot $downgradeApproved -InstallerData (Join-Path $temp 'downgrade-approved-data') -LogDirectory (Join-Path $temp 'downgrade-approved-logs') -RepoRoot $fixture -OfflineOnly
+    } 'older approved version'
+    Assert-True ($script:TargetGuardCalls.Count -eq 0) ("downgrade reached {0}" -f ($script:TargetGuardCalls -join ','))
+    $downgradeLockAfter = [System.IO.File]::ReadAllBytes((Join-Path $downgradeApproved 'install-in-progress.lock'))
+    Assert-True ((Get-BytesSha256 $downgradeLock) -eq (Get-BytesSha256 $downgradeLockAfter) -and $downgradeLock.Length -eq $downgradeLockAfter.Length) 'downgrade changed a pre-existing lock'
+    Assert-True (([System.IO.File]::ReadAllText((Join-Path $downgradeApproved 'Launcher.ps1'))) -match 'newer-live') 'downgrade changed the installed tree'
+    Assert-True (@(Get-ChildItem -LiteralPath (Split-Path -Parent $downgradeApproved) -Force | Where-Object { $_.Name -like '.staging-*' }).Count -eq 0) 'downgrade left a staging directory'
+    $downgradeJournal = Join-Path $temp 'downgrade-approved-logs/install-journal.log'
+    if (Test-Path -LiteralPath $downgradeJournal) {
+      $downgradeJournalText = [System.IO.File]::ReadAllText($downgradeJournal)
+      Assert-True ($downgradeJournalText -notmatch 'payload-acquired') 'downgrade extracted a payload'
+    }
+  } finally {
+    ${function:Set-BrandInstallLock} = $savedLock
+    ${function:Stop-BrandSupervisorProcesses} = $savedStop
+  }
+
   $global:MasterTestCalls = New-Object System.Collections.Generic.List[object]
   $global:MasterStateReads = 0
   $runner = {
@@ -714,6 +765,32 @@ try {
   Write-Utf8NoBom $progress ((@{ root = $repairRoot; prev = $repairPrev } | ConvertTo-Json -Compress) + "`n")
   Assert-Throws { Repair-InterruptedInstall $progress } 'Recovered an interrupted install'
   Assert-True (([System.IO.File]::ReadAllText((Join-Path $repairRoot 'Launcher.ps1'))) -match 'restored') 'interrupted install was not restored'
+  Assert-True (-not (Test-Path ($repairRoot + '.failed-repair'))) 'interrupted install left a failed-repair folder'
+
+  $swapRoot = Join-Path $temp 'swap-root'
+  $swapStage = Join-Path $temp 'swap-stage'
+  New-Item -ItemType Directory -Path $swapRoot, $swapStage | Out-Null
+  Write-Utf8NoBom (Join-Path $swapRoot 'Launcher.ps1') "Write-Output 'before-swap'`n"
+  Write-Utf8NoBom (Join-Path $swapRoot '.installed-bundle.json') '{"brand":"mercedes","version":"1.0.0"}'
+  Write-Utf8NoBom (Join-Path $swapStage 'Launcher.ps1') "Write-Output 'after-swap'`n"
+  $env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP = '1'
+  try {
+    Assert-Throws {
+      Install-VerifiedTree -Staging $swapStage -Root $swapRoot -Brand 'mercedes' -Tag 'mercedes-v1.2.3-beta.1' -Version '1.2.3-beta.1' -ZipSha256 ('f' * 64)
+    } 'test-only failure during install swap'
+  } finally {
+    [Environment]::SetEnvironmentVariable('DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP', $null, 'Process')
+  }
+  Assert-True ([string]::IsNullOrEmpty([string]$env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP)) 'test swap hook stayed set'
+  Assert-True (([System.IO.File]::ReadAllText((Join-Path $swapRoot 'Launcher.ps1'))) -match 'before-swap') 'in-install failure did not restore Launcher.ps1'
+  $swapParent = Split-Path -Parent $swapRoot
+  $swapLeaf = Split-Path -Leaf $swapRoot
+  $swapLeftovers = @(Get-ChildItem -LiteralPath $swapParent -Force | Where-Object { $_.Name -like ($swapLeaf + '.failed-*') -or $_.Name -like ($swapLeaf + '.prev-*') })
+  Assert-True ($swapLeftovers.Count -eq 0) 'in-install failure left a prev or failed folder'
+  $masterText = [System.IO.File]::ReadAllText((Join-Path $repo 'installer/Master/Install-Master.ps1'))
+  $clearAt = $masterText.IndexOf("SetEnvironmentVariable('DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP'")
+  $enterAt = $masterText.IndexOf('Enter-MasterInstallerProcess')
+  Assert-True (($clearAt -ge 0) -and ($enterAt -gt $clearAt)) 'production entry does not clear the test swap hook before elevation'
 
   $tools = Join-Path $repo 'tools/security'
   $wub64 = Select-WubExecutable (Get-SecurityManifest $tools 'wub') 'x64'
