@@ -1,0 +1,103 @@
+﻿{
+    "apps": [
+        {
+            "name": "XENTRY",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "OEM diagnostics for Mercedes-Benz",
+            "showDescription": true
+        },
+        {
+            "name": "WIS",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Workshop manuals and wiring diagrams",
+            "showDescription": true
+        },
+        {
+            "name": "EPC",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Electronic parts catalog",
+            "showDescription": true
+        },
+        {
+            "name": "DAS",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Legacy diagnostics for older models",
+            "showDescription": true
+        },
+        {
+            "name": "Vediamo",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Engineering-level ECU coding",
+            "showDescription": true
+        },
+        {
+            "name": "DTS Monaco",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Advanced ECU coding and flashing",
+            "showDescription": true
+        },
+        {
+            "name": "StarFinder",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Component location and wiring",
+            "showDescription": true
+        },
+        {
+            "name": "SDmedia",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Service and technical documents",
+            "showDescription": true
+        },
+        {
+            "name": "Kit Manager",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Kit and license management",
+            "showDescription": true
+        },
+        {
+            "name": "PartsLink24",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Online parts lookup",
+            "showDescription": true
+        },
+        {
+            "name": "Remote Assist",
+            "path": "",
+            "icon": "",
+            "symbol": "APP",
+            "enabled": true,
+            "description": "Remote support for diagnostics",
+            "showDescription": true
+        }
+    ]
+}

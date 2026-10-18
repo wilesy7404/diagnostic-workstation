@@ -1,9 +1,10 @@
-{
-  "id": "mercedes",
-  "displayName": "Mercedes-Benz",
-  "short": "MB",
-  "updateFamily": "universal",
-  "accent": "#BBC7D0",
-  "accentSoft": "#E6ECEF",
-  "logo": "branding/mercedes.png"
+﻿{
+    "id":  "mercedes",
+    "displayName":  "Mercedes-Benz",
+    "short":  "MB",
+    "updateFamily":  "universal",
+    "accent":  "#BBC7D0",
+    "accentSoft":  "#E6ECEF",
+    "logo":  "branding/mercedes.png",
+    "boldCardDescription":  false
 }
