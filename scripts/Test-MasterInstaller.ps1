@@ -249,13 +249,18 @@ try {
   $catalogHash = Get-Sha256Hex (Join-Path $repo 'catalog/catalog.json')
   Assert-True ($pin -eq $catalogHash) 'catalog pin does not match catalog.json'
   $loadedCatalog = Read-ApprovedCatalog (Join-Path $repo 'catalog/catalog.json') (Join-Path $repo 'catalog/catalog.sha256') (Join-Path $repo 'keys') (Join-Path $repo 'catalog/catalog.json.release.sig')
-  Assert-True ([int]$loadedCatalog.Catalog.catalogSerial -eq 2) 'catalog serial'
+  Assert-True ([int]$loadedCatalog.Catalog.catalogSerial -eq 3) 'catalog serial'
   Assert-True ([string]$loadedCatalog.Catalog.signatureStatus -eq 'placeholder-untrusted') 'catalog signature status'
   $mercedesBrand = Get-CatalogBrand $loadedCatalog.Catalog 'mercedes'
   $bmwBrand = Get-CatalogBrand $loadedCatalog.Catalog 'bmw'
   $mercedesReleases = @(Get-CatalogReleaseList $mercedesBrand)
-  Assert-True ($mercedesReleases.Count -eq 0) 'mercedes releases must stay empty until beta.4'
-  Assert-Throws { Select-ApprovedRelease $mercedesBrand 'mercedes' 'beta' } 'No approved mercedes release is pinned'
+  Assert-True ($mercedesReleases.Count -eq 1) 'mercedes catalog must pin beta.4 only'
+  $mercedesPin = Select-ApprovedRelease $mercedesBrand 'mercedes' 'beta'
+  Assert-True ([string]$mercedesPin.tag -eq 'mercedes-v0.1.3-beta.4' -and [string]$mercedesPin.version -eq '0.1.3-beta.4' -and [string]$mercedesPin.channel -eq 'beta') 'mercedes pin identity'
+  Assert-True ([string]$mercedesPin.sha256 -eq 'ac8a82c0052cd1718cc050c5e28418efe5ed7afea104baaeb0940fcc612f661a' -and [int64]$mercedesPin.bytes -eq 1321743) 'mercedes zip pin'
+  Assert-True ([string]$mercedesPin.manifestSha256 -eq '8c5d857933654bcbfa5bc84140c513d2c3d83863e2e3c0cf956c7471891abdc9' -and [int64]$mercedesPin.manifestBytes -eq 3338) 'mercedes manifest pin'
+  Assert-True ([string]$mercedesPin.asset -eq 'workstation.zip' -and [string]$mercedesPin.manifestAsset -eq 'update-manifest.json') 'mercedes asset names'
+  Assert-True ([string]$mercedesBrand.supervisor.note -notmatch 'Single supervisor for every brand') 'mercedes supervisor note still says it covers every brand'
   Assert-Throws { Select-ApprovedRelease ([pscustomobject]@{ releases = $null }) 'mercedes' 'beta' } 'No approved mercedes release is pinned'
   Assert-Throws { Select-ApprovedRelease ([pscustomobject]@{ releases = @() }) 'mercedes' 'beta' } 'No approved mercedes release is pinned'
   $bmwPin = Select-ApprovedRelease $bmwBrand 'bmw' 'beta'
@@ -270,8 +275,8 @@ try {
   $unusedRoot = Join-Path $temp 'unused-root'
   Assert-Throws {
     Install-ApprovedBrand -Brand 'mercedes' -AllowTestRoot -InstallRoot $unusedRoot -InstallerData (Join-Path $temp 'unused-data') -LogDirectory (Join-Path $temp 'unused-logs') -RepoRoot $repo -AllowUncheckedProcesses -OfflineOnly
-  } 'No approved mercedes release is pinned'
-  Assert-True (-not (Test-Path -LiteralPath $unusedRoot)) 'empty mercedes catalog created an install root'
+  } 'No offline payload was found'
+  Assert-True (-not (Test-Path -LiteralPath $unusedRoot)) 'pinned mercedes catalog created an install root without a payload'
 
   $launcher = [System.Text.Encoding]::UTF8.GetBytes("Write-Output 'approved-launcher'`r`n")
   $version = [System.Text.Encoding]::UTF8.GetBytes('{"version":"1.2.3-beta.1"}')
@@ -943,7 +948,8 @@ try {
     [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.1'; tag = 'v1.0.1-beta.1'; contentDigest = $null; zipSha256 = 'ba9ee12f23a9043196788d4fc7778971f86bc360dcee0a2e26cb20dc687d0eea'; zipBytes = 14323; manifestSha256 = '9cc8b683feed58593744b270824bb524ba823a423a2e50da7acacf4c1ef240de'; manifestBytes = 185; fileCount = 5; sourceCommit = '186efe7531a6019dff2ebec56823de367d780a52'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
     [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.2'; tag = 'v1.0.1-beta.2'; contentDigest = $null; zipSha256 = 'd9ed100f4da72dfce1669ae5471134d3f24d59ee0854daf11209cd434892d2b2'; zipBytes = 14468; manifestSha256 = '720516f77ca3d6725f5296471b12c506558eb89910c4c8e1ad16ef5ff16d7379'; manifestBytes = 185; fileCount = 5; sourceCommit = '186efe7531a6019dff2ebec56823de367d780a52'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
     [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.3'; tag = 'v1.0.1-beta.3'; contentDigest = $null; zipSha256 = '2dcb3d16abb73778c5983a579125d76ceba84694c7531768987be90a77673a15'; zipBytes = 14427; manifestSha256 = '7ca65fed48f9ef990c36eabbfb1b723f481b02b7825ffbbda2e8305c5afe06e8'; manifestBytes = 185; fileCount = 5; sourceCommit = '186efe7531a6019dff2ebec56823de367d780a52'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.4'; tag = 'v1.0.1-beta.4'; contentDigest = $null; zipSha256 = '7e9ba028d09dabe49b68de72aa0c0daf1036c18ef107bac52bca3296df076186'; zipBytes = 14643; manifestSha256 = '68ab06ec6e99310ea652bb5d782f96514dd4b8269fdd44f2389f2571feefafd1'; manifestBytes = 141; fileCount = 5; sourceCommit = '2c0034759611f49cf1521aa3d8659c3d40ed628f'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null }
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.4'; tag = 'v1.0.1-beta.4'; contentDigest = $null; zipSha256 = '7e9ba028d09dabe49b68de72aa0c0daf1036c18ef107bac52bca3296df076186'; zipBytes = 14643; manifestSha256 = '68ab06ec6e99310ea652bb5d782f96514dd4b8269fdd44f2389f2571feefafd1'; manifestBytes = 141; fileCount = 5; sourceCommit = '2c0034759611f49cf1521aa3d8659c3d40ed628f'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.4'; tag = 'mercedes-v0.1.3-beta.4'; contentDigest = 'b43616e9f62b1c254115eab33bbce36eeaf410b60e1de723f3125d18a5267779'; zipSha256 = 'ac8a82c0052cd1718cc050c5e28418efe5ed7afea104baaeb0940fcc612f661a'; zipBytes = 1321743; manifestSha256 = '8c5d857933654bcbfa5bc84140c513d2c3d83863e2e3c0cf956c7471891abdc9'; manifestBytes = 3338; fileCount = 20; sourceCommit = '2b138bf07b0b083615a76a7c16da5e27f16b75e8'; workflowRunId = '39091982618'; historical = $false; neverReMint = $true; voided = $false; published = $false; note = 'Pinned in catalog serial 3 from Actions run 39091982618. Not tagged and not published.' }
   )
   $lockEntries = @($lock.entries)
   Assert-VersionsLockPrefix $lockEntries $lockExpected

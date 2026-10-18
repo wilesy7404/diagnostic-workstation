@@ -182,6 +182,24 @@
       "voided": false,
       "published": true,
       "note": null
+    },
+    {
+      "brand": "mercedes",
+      "version": "0.1.3-beta.4",
+      "tag": "mercedes-v0.1.3-beta.4",
+      "contentDigest": "b43616e9f62b1c254115eab33bbce36eeaf410b60e1de723f3125d18a5267779",
+      "zipSha256": "ac8a82c0052cd1718cc050c5e28418efe5ed7afea104baaeb0940fcc612f661a",
+      "zipBytes": 1321743,
+      "manifestSha256": "8c5d857933654bcbfa5bc84140c513d2c3d83863e2e3c0cf956c7471891abdc9",
+      "manifestBytes": 3338,
+      "fileCount": 20,
+      "sourceCommit": "2b138bf07b0b083615a76a7c16da5e27f16b75e8",
+      "workflowRunId": "39091982618",
+      "historical": false,
+      "neverReMint": true,
+      "voided": false,
+      "published": false,
+      "note": "Pinned in catalog serial 3 from Actions run 39091982618. Not tagged and not published."
     }
   ]
 }
