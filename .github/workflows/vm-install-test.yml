@@ -29,17 +29,20 @@ permissions:
 jobs:
   vm-install-test:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Check out catalog ref
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.catalog_ref }}
+          persist-credentials: false
 
       - name: Check out the VM harness from this workflow commit
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           path: vm-harness
+          persist-credentials: false
 
       - name: Parse workflow scripts with Windows PowerShell 5.1
         shell: powershell
@@ -77,16 +80,29 @@ jobs:
               if ($release -and -not [string]::IsNullOrWhiteSpace([string]$release.tag)) { $releases += $release }
             }
             if ($releases.Count -eq 0) {
-              Write-Output "NOT RUN $id: no pinned release, artifact not downloaded"
+              Write-Output "NOT RUN ${id}: no pinned release, artifact not downloaded"
               continue
             }
             if ($releases.Count -ne 1) { throw "$id has $($releases.Count) pinned releases. This workflow downloads one artifact per brand." }
             $tag = [string]$releases[0].tag
             $runId = [string]$runIds[$id]
             if ([string]::IsNullOrWhiteSpace($runId)) { throw "catalog pins $tag but no run id was provided for $id" }
+            $api = "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/artifacts"
+            $listedText = (& gh api $api 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0) { throw "gh api failed for run $runId (exit $LASTEXITCODE). $listedText" }
+            $listed = $listedText | ConvertFrom-Json
+            $match = @()
+            foreach ($artifact in @($listed.artifacts)) {
+              if ($artifact -and [string]$artifact.name -eq $tag) { $match += $artifact }
+            }
+            if ($match.Count -eq 0) { throw "run $runId has no artifact named $tag" }
+            foreach ($artifact in $match) {
+              if ($artifact.expired) { throw "artifact $tag from run $runId is expired" }
+            }
             $dir = Join-Path 'offline' $tag
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            gh run download $runId --repo $env:GITHUB_REPOSITORY --name $tag --dir $dir
+            & gh run download $runId --repo $env:GITHUB_REPOSITORY --name $tag --dir $dir
+            if ($LASTEXITCODE -ne 0) { throw "gh run download failed for $tag (exit $LASTEXITCODE)" }
             foreach ($name in @('workstation.zip', 'update-manifest.json')) {
               $path = Join-Path $dir $name
               if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing $path" }
@@ -103,7 +119,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'vm-install-test-output' | Out-Null
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File 'vm-harness\scripts\Invoke-VmInstallTest.ps1' -RepoRoot (Get-Location).Path -ReportDir (Join-Path (Get-Location).Path 'vm-install-test-output') -CatalogRef $env:CATALOG_REF -MercedesRunId $env:MERCEDES_RUN_ID -BmwRunId $env:BMW_RUN_ID
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -STA -ExecutionPolicy Bypass -File 'vm-harness\scripts\Invoke-VmInstallTest.ps1' -RepoRoot (Get-Location).Path -ReportDir (Join-Path (Get-Location).Path 'vm-install-test-output') -CatalogRef $env:CATALOG_REF -MercedesRunId $env:MERCEDES_RUN_ID -BmwRunId $env:BMW_RUN_ID
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload installer logs and report

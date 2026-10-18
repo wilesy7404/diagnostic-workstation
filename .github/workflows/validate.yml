@@ -9,6 +9,7 @@ permissions:
 jobs:
   validate:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Check PowerShell source syntax
@@ -17,6 +18,7 @@ jobs:
           $files = @(Get-ChildItem -Path core,installer -Filter '*.ps1' -Recurse -ErrorAction SilentlyContinue)
           $harness = Get-Item -LiteralPath 'scripts/Invoke-VmInstallTest.ps1'
           $files += $harness
+          $files += (Get-Item -LiteralPath 'scripts/Test-WorkflowPowerShell.ps1')
           if ($files.Count -eq 0) { throw 'No PowerShell files found' }
           foreach ($file in $files) {
             $tokens = $null
@@ -46,6 +48,12 @@ jobs:
             }
           }
           Write-Host 'Source checks passed. Runtime/UI testing still required.'
+      - name: Parse inline workflow PowerShell
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & pwsh -NoProfile -File scripts/Test-WorkflowPowerShell.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   workstation-manager:
     runs-on: windows-latest
@@ -69,6 +77,7 @@ jobs:
 
   master-installer:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Fetch the pull request base
