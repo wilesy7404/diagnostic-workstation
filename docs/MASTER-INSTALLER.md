@@ -39,7 +39,7 @@ After a verified install, the installer always runs the security step. There is 
 
 WorkstationManager starts a new `powershell.exe` for Launcher, Dock, and UpdateAgent whenever those processes exit. It waits only while `<brand root>\install-in-progress.lock` exists. The installer renames that folder and then stops Windows Update and Defender services, which makes the watched scripts exit. The previous build never wrote the lock, so the supervisor opened another PowerShell for each exit. Watchdog and the shell host do the same on a timer, and some of those start paths leave the console visible. On a shop account that is already an administrator, those windows are elevated. Aborting the run left Defender and Windows Update running because the failure path rolls the security changes back.
 
-The installer now writes `install-in-progress.lock` in the brand root before the rename and again on the new root before the security steps, and removes it when the run finishes. It stops Launcher, Dock, Watchdog, WorkstationShell, and UpdateAgent for that root. It leaves `WorkstationManager.exe` running so the manager can keep honoring the lock. It does not start the supervisor afterward, does not register a scheduled task, and does not change Winlogon. Start Menu undo shortcuts use `-WindowStyle Hidden`. Windows Update Blocker is still started hidden and awaited. Defender changes stay in-process.
+The installer now writes `install-in-progress.lock` in the brand root before the rename and again on the new root before the security steps, and removes it when the run finishes. It stops Launcher, Dock, Watchdog, WorkstationShell, and UpdateAgent for that root. It leaves `WorkstationManager.exe` running so the manager can keep honoring the lock. It does not start the supervisor afterward and does not change Winlogon. The only scheduled task is the transient Defender SYSTEM task below: it is created, run, and deleted in that same step, and it has no trigger. Start Menu undo shortcuts use `-WindowStyle Hidden`. Windows Update Blocker is still started hidden and awaited.
 
 Windows Update uses the vendored Sordum Windows Update Blocker, hidden and elevated:
 
@@ -55,9 +55,31 @@ Every security action is logged under `%LOCALAPPDATA%\DiagnosticWorkstation-Inst
 
 ## Windows Defender
 
-Defender disable runs in the same elevated installer process, after the brand install and the Windows Update step. There is no confirm screen and no extra window. The old Defender Control binary is not shipped and is not started. `tools/security/dcontrol/ReadMe.txt` is a vendor changelog kept for reference.
+Defender disable runs after the brand install and the Windows Update step. There is no confirm screen and no extra window. The old Defender Control binary is not shipped and is not started. `tools/security/dcontrol/ReadMe.txt` is a vendor changelog kept for reference.
 
-`installer/Master/lib/Defender.ps1` is the implementation.
+`installer/Master/lib/Defender.ps1` builds the command list. An elevated administrator can write the policy values below. On current Windows, `Set-MpPreference` and changes to `WinDefend`, `WdNisSvc`, and `MDCoreSvc` return Access Denied for that same administrator even when Tamper Protection is off, because those services are protected. Those commands run as SYSTEM.
+
+### SYSTEM task
+
+Each consecutive run of `Set-MpPreference` or service commands is one batch. Disable order stays preferences, then policy, then services, so a disable uses two SYSTEM tasks with the policy writes in the admin process between them. Re-enable and a failed-disable rollback use the same split.
+
+For each batch the installer:
+
+1. Writes the batch to a `commands.json` file under the installer log directory.
+2. Registers a scheduled task named `DiagnosticWorkstation-Defender-<guid>`. The principal is `SYSTEM`, the run level is highest, and there is no trigger. Settings allow the task to run on battery, hide it, and limit it to five minutes.
+3. Starts the task. The action is Windows PowerShell with `-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File` on `Invoke-DefenderSystemJob.ps1`.
+4. Waits up to three minutes for `result.json`.
+5. Deletes the task in a `finally` block, including when the batch fails. A later Defender step also removes any leftover `DiagnosticWorkstation-Defender-*` task before it registers a new one. A leftover task has no trigger, so it does not run at boot or logon.
+
+The journal step is `defender-system-task` (`taskName`, principal `SYSTEM`, `runLevel` `Highest`, `deleted`, `transient`).
+
+If a command inside the SYSTEM job returns Access Denied (`0x80070005`), that job runs the remaining commands once as TrustedInstaller. It enables `SeDebugPrivilege`, duplicates the TrustedInstaller service token, and calls `CreateProcessWithTokenW` with `CREATE_NO_WINDOW` and a hidden window. The child is the same job script with `-NoTrustedInstallerFallback`, so it does not start another TrustedInstaller process. If that fallback cannot start, the original access-denied error is returned and the admin process rolls the batch back through the same SYSTEM path.
+
+The Tamper Protection prompt stays in the admin process, before any task is created. The task runs in session 0 and cannot show a window.
+
+### PowerShell 5.1 paths
+
+Windows PowerShell 5.1 `Join-Path` accepts only `-Path` and `-ChildPath`. `Copy-MasterCommands` used to call the three-argument form, which threw before the re-enable scripts were copied. Installer paths now use nested two-argument `Join-Path` calls. The copied `Master\lib` folder includes `Invoke-DefenderSystemJob.ps1`, which re-enable and uninstall load.
 
 ### Set-MpPreference
 
@@ -122,11 +144,16 @@ Exit codes from `Install-Master.ps1` after the brand files are in place:
 
 `Enable-Security.ps1 -Action enable` and `Uninstall-MasterBrand.ps1` use exit 10 and 11 for the Defender undo. `-Action reapply` does not call the Defender module.
 
-## Windows VM check before merge
+## Windows check before merge
 
-1. Run `pwsh -NoProfile -File scripts/Test-MasterInstaller.ps1`. It must not be elevated into a shop profile.
-2. On a throwaway VM, run `Wub_x64.exe /?` elevated and confirm `/D`, `/E`, and `/P` before trusting a live disable. This environment has not executed that binary.
-3. On a throwaway VM, run the installer and confirm Defender realtime protection, the policy values, and `WinDefend` actually change, then run **Re-enable Windows Update and Defender** and confirm every setting, policy value, and service returns to the captured state.
-4. On a throwaway VM with Tamper Protection on, confirm the installer prompts once, changes nothing while it stays on, and continues only after it is turned off.
-5. Confirm the install did not change Winlogon or the shell, and did not start the old Defender Control program.
-6. With WorkstationManager already running, confirm the install opens no extra PowerShell windows, `install-in-progress.lock` exists only during the run, and the manager does not relaunch Launcher, Dock, or UpdateAgent until the lock is gone.
+Do not retest on a live shop PC. A Mercedes workstation retest on 2026-10-17 already confirmed two things: the supervisor lock does not open a PowerShell storm, and `Wub_x64.exe /D /P` followed by `Wub_x64.exe /E` is a clean round-trip. This environment still does not execute that binary.
+
+The next retest, with Tamper Protection off, should confirm:
+
+1. No extra PowerShell windows. `install-in-progress.lock` exists only during the run.
+2. `Wub_x64.exe /D /P` then `/E` still round-trips.
+3. Realtime protection and `WinDefend`, `WdNisSvc`, and `MDCoreSvc` actually change, and re-enable restores each one. The journal shows `defender-system-task` with `deleted` true, and Task Scheduler has no leftover `DiagnosticWorkstation-Defender-*` task when the run finishes.
+4. The policy values appear during disable and are gone after re-enable. `defender-pre-state.json` remains the only snapshot.
+5. If SYSTEM is still Access Denied, the journal's `trustedInstaller` field shows whether the fallback ran, and whether re-enable still restores `WinDefend`.
+6. With Tamper Protection on, the installer prompts once and changes nothing while it stays on.
+7. Winlogon, the shell, and Run startup are unchanged. The old Defender Control program does not start.

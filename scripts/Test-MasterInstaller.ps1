@@ -71,8 +71,37 @@ try {
   Assert-True (-not ($entry.Contains('dControl.exe'))) 'entry names dControl.exe'
   Assert-True (-not ($entry.Contains('Probe-DefenderControlCli.ps1'))) 'entry calls the Defender probe'
   Assert-True (-not ($blob.Contains('Start-Process'))) 'installer starts an unwaited process'
-  Assert-True (-not ($blob.Contains('Register-ScheduledTask'))) 'installer registers a scheduled task'
+  Assert-True ($blob.Contains('Register-ScheduledTask')) 'Defender SYSTEM task is not registered'
+  Assert-True ($blob.Contains('Unregister-ScheduledTask')) 'Defender SYSTEM task is not deleted'
   Assert-True (-not ($blob.Contains('schtasks'))) 'installer shells out to task scheduler'
+  Assert-True (-not ($blob.Contains('New-ScheduledTaskTrigger'))) 'Defender task has a trigger'
+  Assert-True (-not ($blob.Contains('AtStartup'))) 'Defender task starts at boot'
+  Assert-True (-not ($blob.Contains('AtLogOn'))) 'Defender task starts at logon'
+  foreach ($file in $sources) {
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors -and @($parseErrors).Count -gt 0) { throw "parse error in $($file.Name): $($parseErrors[0].Message)" }
+    $joinCommands = @($ast.FindAll({
+      param($node)
+      return ($node -is [System.Management.Automation.Language.CommandAst]) -and ($node.GetCommandName() -eq 'Join-Path')
+    }, $true))
+    foreach ($command in $joinCommands) {
+      $positional = 0
+      $elements = @($command.CommandElements)
+      for ($index = 1; $index -lt $elements.Count; $index++) {
+        $element = $elements[$index]
+        if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
+          if ($element.Argument) { continue }
+          $follows = $index + 1
+          if ($follows -lt $elements.Count -and -not ($elements[$follows] -is [System.Management.Automation.Language.CommandParameterAst])) { $index = $follows }
+          continue
+        }
+        $positional++
+      }
+      if ($positional -gt 2) { throw "Join-Path in $($file.Name) has $positional positional arguments" }
+    }
+  }
   Assert-True ($blob.Contains('-ElevatedRelaunch')) 'elevation relaunch has no re-entry guard'
   Assert-True ($blob.Contains('install-in-progress.lock')) 'supervisor install lock is missing'
   Assert-True ($entry.Contains('-SkipElevation:$VerifyOnly')) 'verify-only still relaunches for elevation'
@@ -598,6 +627,137 @@ try {
   } -TamperPrompt { param($Message) return $true }
   Assert-True ($failed.status -eq 'failed') 'a Defender apply error was ignored'
   Assert-True (@($rollback | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -ge 1) 'failed disable did not roll back policy'
+
+  Assert-True ((Get-DefenderCommandScope 'Set-Policy') -eq 'admin') 'policy writes left the admin process'
+  Assert-True ((Get-DefenderCommandScope 'Remove-Policy') -eq 'admin') 'policy removal left the admin process'
+  Assert-True ((Get-DefenderCommandScope 'Set-MpPreference') -eq 'system') 'Set-MpPreference stayed in the admin process'
+  Assert-True ((Get-DefenderCommandScope 'Set-Service') -eq 'system') 'service changes stayed in the admin process'
+  Assert-True (Test-DefenderAccessDenied 'Access is denied') 'access denied was not recognized'
+  Assert-True (Test-DefenderAccessDenied '0x80070005') '0x80070005 was not recognized'
+  Assert-True (-not (Test-DefenderAccessDenied 'Tamper Protection is enabled')) 'tamper text was treated as access denied'
+  Assert-Throws {
+    Register-DefenderSystemTask ([pscustomobject]@{ taskName = 'DiagnosticWorkstation-Defender-test'; userId = 'SYSTEM'; runLevel = 'Highest'; execute = 'powershell.exe'; argumentLine = '-NoProfile'; workingDirectory = $temp })
+  } 'forbidden'
+
+  $systemLogs = Join-Path $temp 'defender-system-logs'
+  New-Item -ItemType Directory -Force -Path $systemLogs | Out-Null
+  $systemSnap = Join-Path $temp 'defender-system.json'
+  $systemAdmin = New-Object System.Collections.Generic.List[object]
+  $systemHost = New-Object System.Collections.Generic.List[object]
+  $systemTask = {
+    param($Phase, $Spec)
+    $systemHost.Add([pscustomobject]@{ phase = $Phase; spec = $Spec }) | Out-Null
+    if ($Phase -eq 'wait') { return [pscustomobject]@{ ok = $true; error = $null } }
+  }
+  $systemDisabled = Invoke-DefenderControl -Action 'disable' -LogDirectory $systemLogs -SnapshotPath $systemSnap -ReadState {
+    return (New-TestDefenderState 'off')
+  } -CommandSink { param($Command) $systemAdmin.Add($Command) | Out-Null } -TaskHost $systemTask -TamperPrompt { param($Message) return $false }
+  Assert-True ($systemDisabled.status -eq 'disabled') 'SYSTEM Defender disable did not report disabled'
+  $systemRegisters = @($systemHost | Where-Object { $_.phase -eq 'register' })
+  $systemDeletes = @($systemHost | Where-Object { $_.phase -eq 'delete' })
+  Assert-True ($systemRegisters.Count -eq 2) 'disable did not split preferences and services into two SYSTEM batches'
+  Assert-True ($systemDeletes.Count -eq $systemRegisters.Count) 'a SYSTEM task was left registered'
+  $preferenceBatch = @($systemRegisters[0].spec.commands)
+  $serviceBatch = @($systemRegisters[1].spec.commands)
+  Assert-True ($preferenceBatch.Count -gt 0 -and @($preferenceBatch | Where-Object { $_.kind -ne 'Set-MpPreference' }).Count -eq 0) 'the first SYSTEM batch was not only Set-MpPreference'
+  Assert-True ($serviceBatch.Count -gt 0 -and @($serviceBatch | Where-Object { $_.kind -ne 'Set-Service' }).Count -eq 0) 'the second SYSTEM batch was not only Set-Service'
+  Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 1) 'DisableAntiSpyware was not written in the admin process'
+  Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-Service' -or $_.kind -eq 'Set-MpPreference' }).Count -eq 0) 'a SYSTEM command ran in the admin sink'
+  Assert-True ($systemRegisters[0].spec.taskName.StartsWith('DiagnosticWorkstation-Defender-')) 'task name is not transient'
+  Assert-True ($systemRegisters[0].spec.userId -eq 'SYSTEM') 'task principal is not SYSTEM'
+  Assert-True ($systemRegisters[0].spec.runLevel -eq 'Highest') 'task run level is not highest'
+  Assert-True ($systemRegisters[0].spec.argumentLine.Contains('-WindowStyle Hidden')) 'SYSTEM task can show a window'
+  Assert-True ($systemRegisters[0].spec.argumentLine.Contains('-NonInteractive')) 'SYSTEM task is interactive'
+  $systemJournal = [System.IO.File]::ReadAllText((Join-Path $systemLogs 'install-journal.log'))
+  Assert-True ($systemJournal.Contains('"step":"defender-system-task"')) 'SYSTEM task was not journaled'
+  Assert-True ($systemJournal.Contains('"deleted":true')) 'journal did not record task deletion'
+  Assert-True ($systemJournal.Contains('"transient":true')) 'journal did not record the task as transient'
+  $enableHost = New-Object System.Collections.Generic.List[object]
+  $enableAdmin = New-Object System.Collections.Generic.List[object]
+  $systemEnabled = Invoke-DefenderControl -Action 'enable' -LogDirectory $systemLogs -SnapshotPath $systemSnap -ReadState {
+    return (New-TestDefenderState 'off')
+  } -CommandSink { param($Command) $enableAdmin.Add($Command) | Out-Null } -TaskHost {
+    param($Phase, $Spec)
+    $enableHost.Add([pscustomobject]@{ phase = $Phase; spec = $Spec }) | Out-Null
+    if ($Phase -eq 'wait') { return [pscustomobject]@{ ok = $true; error = $null } }
+  } -TamperPrompt { param($Message) return $false }
+  Assert-True ($systemEnabled.status -eq 'enabled') 'SYSTEM Defender re-enable did not report enabled'
+  $enableRegisters = @($enableHost | Where-Object { $_.phase -eq 'register' })
+  $enableDeletes = @($enableHost | Where-Object { $_.phase -eq 'delete' })
+  Assert-True ($enableRegisters.Count -eq 2) 're-enable did not use SYSTEM for preferences and services'
+  Assert-True ($enableDeletes.Count -eq $enableRegisters.Count) 're-enable left a SYSTEM task registered'
+  Assert-True (@($enableRegisters[1].spec.commands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WinDefend' }).Count -eq 1) 're-enable did not restore WinDefend as SYSTEM'
+  Assert-True (@($enableAdmin | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 1) 're-enable did not remove policy in the admin process'
+
+  $deniedLogs = Join-Path $temp 'defender-denied-logs'
+  New-Item -ItemType Directory -Force -Path $deniedLogs | Out-Null
+  $deniedHost = New-Object System.Collections.Generic.List[object]
+  $denied = Invoke-DefenderControl -Action 'disable' -LogDirectory $deniedLogs -SnapshotPath (Join-Path $temp 'defender-denied.json') -ReadState {
+    return (New-TestDefenderState 'off')
+  } -CommandSink { param($Command) } -TaskHost {
+    param($Phase, $Spec)
+    $deniedHost.Add([pscustomobject]@{ phase = $Phase; spec = $Spec }) | Out-Null
+    if ($Phase -eq 'wait') { return [pscustomobject]@{ ok = $false; error = 'Access is denied' } }
+  } -TamperPrompt { param($Message) return $false }
+  Assert-True ($denied.status -eq 'failed') 'access denied from the SYSTEM task was ignored'
+  $deniedRegisters = @($deniedHost | Where-Object { $_.phase -eq 'register' })
+  $deniedDeletes = @($deniedHost | Where-Object { $_.phase -eq 'delete' })
+  Assert-True ($deniedRegisters.Count -ge 2) 'access denied did not roll back through the SYSTEM task'
+  Assert-True ($deniedDeletes.Count -eq $deniedRegisters.Count) 'access denied left a SYSTEM task registered'
+  Assert-True (@($deniedRegisters | Where-Object { @($_.spec.commands | Where-Object { $_.kind -eq 'Set-MpPreference' }).Count -gt 0 }).Count -ge 2) 'rollback did not send Set-MpPreference to SYSTEM'
+
+  $fallbackCalls = New-Object System.Collections.Generic.List[string]
+  $fallbackSeen = New-Object System.Collections.Generic.List[string]
+  $fallbackCommands = @(
+    [pscustomobject]@{ kind = 'Set-MpPreference'; name = 'A' },
+    [pscustomobject]@{ kind = 'Set-MpPreference'; name = 'B' },
+    [pscustomobject]@{ kind = 'Set-Service'; name = 'WinDefend' }
+  )
+  $fallback = Invoke-DefenderCommandListWithFallback -Commands $fallbackCommands -Executor {
+    param($Command)
+    $fallbackCalls.Add([string]$Command.name) | Out-Null
+    if ($Command.name -eq 'B') { throw 'Access is denied' }
+  } -TrustedInstallerBatch {
+    param($Remaining)
+    foreach ($item in @($Remaining)) { $fallbackSeen.Add([string]$item.name) | Out-Null }
+    return [pscustomobject]@{ ok = $true; applied = @($Remaining); error = $null }
+  }
+  Assert-True ($fallback.ok -and $fallback.trustedInstaller) 'TrustedInstaller fallback did not take the denied remainder'
+  Assert-True (($fallbackCalls -join ',') -eq 'A,B') 'commands after access denied still ran as SYSTEM'
+  Assert-True (($fallbackSeen -join ',') -eq 'B,WinDefend') 'TrustedInstaller did not receive the remaining commands'
+  $fallbackFailed = Invoke-DefenderCommandListWithFallback -Commands $fallbackCommands -Executor {
+    param($Command)
+    if ($Command.name -eq 'B') { throw 'Access is denied' }
+  } -TrustedInstallerBatch {
+    param($Remaining)
+    return [pscustomobject]@{ ok = $false; error = 'CreateProcessWithTokenW failed 5'; applied = @() }
+  }
+  Assert-True ((-not $fallbackFailed.ok) -and $fallbackFailed.trustedInstaller) 'a failed TrustedInstaller fallback reported success'
+  Assert-True ($fallbackFailed.error.Contains('CreateProcessWithTokenW')) 'TrustedInstaller failure detail was dropped'
+  $fallbackUnused = @{ n = 0 }
+  $fallbackOk = Invoke-DefenderCommandListWithFallback -Commands @([pscustomobject]@{ kind = 'Set-Service'; name = 'WinDefend' }) -Executor {
+    param($Command)
+  } -TrustedInstallerBatch {
+    param($Remaining)
+    $fallbackUnused.n++
+    return [pscustomobject]@{ ok = $true; applied = @($Remaining) }
+  }
+  Assert-True ($fallbackOk.ok -and -not $fallbackOk.trustedInstaller -and $fallbackUnused.n -eq 0) 'TrustedInstaller ran when SYSTEM succeeded'
+  $copyRoot = Join-Path $temp 'copy-master'
+  Copy-MasterCommands $repo $copyRoot
+  $copiedJob = Join-Path -Path (Join-Path -Path (Join-Path -Path $copyRoot -ChildPath 'Master') -ChildPath 'lib') -ChildPath 'Invoke-DefenderSystemJob.ps1'
+  Assert-True (Test-Path -LiteralPath $copiedJob) 'the SYSTEM job script was not copied for re-enable'
+  $jobText = [System.IO.File]::ReadAllText((Join-Path $lib 'Invoke-DefenderSystemJob.ps1'))
+  $sourceMatch = [regex]::Match($jobText, "(?s)TrustedInstallerSource = @'\r?\n(.*)\r?\n'@")
+  Assert-True ($sourceMatch.Success) 'TrustedInstaller source is missing from the job'
+  try {
+    Add-Type -TypeDefinition $sourceMatch.Groups[1].Value -Language CSharp -ErrorAction Stop
+  } catch {
+    if ($_.Exception.Message -match 'already exists') { }
+    elseif ($_.Exception.Message -match 'compiler|csc|CodeDom|Roslyn') { throw "TrustedInstaller source could not be compiled: $($_.Exception.Message)" }
+    else { throw }
+  }
+  Assert-True ($null -ne ('DefenderTrustedInstallerProcess' -as [type])) 'TrustedInstaller helper did not compile'
 
   $signed = Join-Path $temp 'signed-repo'
   New-Item -ItemType Directory -Force -Path (Join-Path $signed 'catalog'), (Join-Path $signed 'keys') | Out-Null

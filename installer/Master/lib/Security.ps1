@@ -210,22 +210,25 @@ function Invoke-DefenderDisable {
     [Parameter(Mandatory = $true)][string]$SnapshotPath,
     [scriptblock]$ReadState,
     [scriptblock]$CommandSink,
-    [scriptblock]$TamperPrompt
+    [scriptblock]$TamperPrompt,
+    [scriptblock]$TaskHost
   )
-  return Invoke-DefenderControl -Action 'disable' -LogDirectory $LogDirectory -SnapshotPath $SnapshotPath -ReadState $ReadState -CommandSink $CommandSink -TamperPrompt $TamperPrompt
+  return Invoke-DefenderControl -Action 'disable' -LogDirectory $LogDirectory -SnapshotPath $SnapshotPath -ReadState $ReadState -CommandSink $CommandSink -TamperPrompt $TamperPrompt -TaskHost $TaskHost
 }
 
 function Copy-MasterCommands {
   param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][string]$InstallerData)
+  # Windows PowerShell 5.1 Join-Path accepts only -Path and -ChildPath. Nest two-argument calls.
   $source = Join-MasterPath $RepoRoot @('installer', 'Master')
   $dest = Join-Path -Path $InstallerData -ChildPath 'Master'
-  New-Item -ItemType Directory -Force -Path $dest, (Join-Path $dest 'lib') | Out-Null
+  $libDir = Join-Path -Path $dest -ChildPath 'lib'
+  New-Item -ItemType Directory -Force -Path $dest, $libDir | Out-Null
   foreach ($name in @('Enable-Security.ps1', 'Uninstall-MasterBrand.ps1', 'Install-Master.ps1')) {
     $file = Join-Path -Path $source -ChildPath $name
-    if (Test-Path -LiteralPath $file) { Copy-Item -LiteralPath $file -Destination (Join-Path $dest $name) -Force }
+    if (Test-Path -LiteralPath $file) { Copy-Item -LiteralPath $file -Destination (Join-Path -Path $dest -ChildPath $name) -Force }
   }
-  Get-ChildItem -LiteralPath (Join-Path $source 'lib') -Filter '*.ps1' | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dest 'lib' $_.Name) -Force
+  Get-ChildItem -LiteralPath (Join-Path -Path $source -ChildPath 'lib') -Filter '*.ps1' | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path -Path $libDir -ChildPath $_.Name) -Force
   }
 }
 
@@ -288,7 +291,8 @@ function Invoke-AutomaticSecurity {
     [scriptblock]$TamperReader,
     [scriptblock]$TamperPrompt,
     [scriptblock]$DefenderReader,
-    [scriptblock]$DefenderSink
+    [scriptblock]$DefenderSink,
+    [scriptblock]$TaskHost
   )
   $sourceTools = Find-SecurityToolsRoot $RepoRoot
   $deployed = Join-MasterPath $InstallerData @('tools', 'security')
@@ -305,7 +309,7 @@ function Invoke-AutomaticSecurity {
   $reader = $DefenderReader
   if (-not $reader -and $TamperReader) { $reader = $TamperReader }
   $snapshot = Join-Path -Path $InstallerData -ChildPath 'defender-pre-state.json'
-  $defender = Invoke-DefenderDisable -LogDirectory $LogDirectory -SnapshotPath $snapshot -ReadState $reader -CommandSink $DefenderSink -TamperPrompt $TamperPrompt
+  $defender = Invoke-DefenderDisable -LogDirectory $LogDirectory -SnapshotPath $snapshot -ReadState $reader -CommandSink $DefenderSink -TamperPrompt $TamperPrompt -TaskHost $TaskHost
   $state = [ordered]@{
     brand = $Brand
     utc = [datetimeoffset]::UtcNow.ToString('o')
@@ -337,7 +341,8 @@ function Invoke-SecurityUndo {
     [scriptblock]$StateReader,
     [scriptblock]$DefenderReader,
     [scriptblock]$DefenderSink,
-    [scriptblock]$TamperPrompt
+    [scriptblock]$TamperPrompt,
+    [scriptblock]$TaskHost
   )
   if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Find-MasterRepoRoot $PSScriptRoot }
   $tools = $null
@@ -357,7 +362,7 @@ function Invoke-SecurityUndo {
     $snapshotRoot = $InstallerData
     if ([string]::IsNullOrWhiteSpace($snapshotRoot)) { $snapshotRoot = $LogDirectory }
     $snapshot = Join-Path -Path $snapshotRoot -ChildPath 'defender-pre-state.json'
-    $defenderResult = Invoke-DefenderControl -Action 'enable' -LogDirectory $LogDirectory -SnapshotPath $snapshot -ReadState $DefenderReader -CommandSink $DefenderSink -TamperPrompt $TamperPrompt
+    $defenderResult = Invoke-DefenderControl -Action 'enable' -LogDirectory $LogDirectory -SnapshotPath $snapshot -ReadState $DefenderReader -CommandSink $DefenderSink -TamperPrompt $TamperPrompt -TaskHost $TaskHost
     $defenderStatus = [string]$defenderResult.status
   }
   return [pscustomobject]@{ windowsUpdate = $result.status; defender = $defenderStatus; brand = $Brand }
