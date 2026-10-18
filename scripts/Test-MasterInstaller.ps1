@@ -94,10 +94,10 @@ function New-SampleLockRow($Brand, $Version, $Tag, $Published, $Voided, $ZipByte
     brand = $Brand
     version = $Version
     tag = $Tag
-    contentDigest = $null
-    zipSha256 = $null
+    contentDigest = ('a' * 64)
+    zipSha256 = ('b' * 64)
     zipBytes = $ZipBytes
-    manifestSha256 = $null
+    manifestSha256 = ('c' * 64)
     manifestBytes = $null
     fileCount = $null
     sourceCommit = $null
@@ -122,10 +122,17 @@ function Assert-NewLockRow($Row, [int]$Index, [string]$FieldKey) {
   if ($Row.brand -ceq 'bmw') { $prefix = 'bmw-v' }
   elseif ($Row.brand -ceq 'mercedes') { $prefix = 'mercedes-v' }
   else { throw "versions.lock[$Index] brand is not approved" }
-  if (-not $Row.tag.StartsWith($prefix)) {
-    throw "versions.lock[$Index] tag does not match $prefix"
+  $expectedTag = $prefix + [string]$Row.version
+  if ($Row.tag -cne $expectedTag) {
+    throw "versions.lock[$Index] tag does not match $expectedTag"
   }
-  foreach ($name in @('contentDigest', 'zipSha256', 'manifestSha256', 'sourceCommit', 'workflowRunId', 'note')) {
+  foreach ($name in @('contentDigest', 'zipSha256', 'manifestSha256')) {
+    $value = $Row.$name
+    if ($value -isnot [string] -or -not ($value -cmatch '^[0-9a-f]{64}$')) {
+      throw "versions.lock[$Index].$name must be 64 lowercase hex characters"
+    }
+  }
+  foreach ($name in @('sourceCommit', 'workflowRunId', 'note')) {
     $value = $Row.$name
     if ($null -ne $value -and $value -isnot [string]) {
       throw "versions.lock[$Index].$name type mismatch"
@@ -1025,6 +1032,7 @@ try {
   $newKey = Get-LockFieldKey (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10)
   Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10) 0 $newKey
   Assert-NewLockRow (New-SampleLockRow 'mercedes' '0.1.3-beta.4' 'mercedes-v0.1.3-beta.4' $false $false 20) 1 $newKey
+  Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v9.9.9' $false $false 10) 0 $newKey } 'tag does not match bmw-v1.0.3-beta.1'
   Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'v1.0.3-beta.1' $false $false 10) 0 $newKey } 'tag does not match bmw-v'
   Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' $null $false $false 10) 0 $newKey } 'tag type mismatch'
   Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'mercedes' '0.1.3-beta.4' 'bmw-v0.1.3-beta.4' $false $false 20) 1 $newKey } 'tag does not match mercedes-v'
@@ -1032,6 +1040,11 @@ try {
   Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $null $false 10) 0 $newKey } 'published type mismatch'
   Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false 1 10) 0 $newKey } 'voided type mismatch'
   Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false '10') 0 $newKey } 'zipBytes type mismatch'
+  foreach ($hashName in @('zipSha256', 'manifestSha256', 'contentDigest')) {
+    $badHash = New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10
+    $badHash.$hashName = 'zz'
+    Assert-Throws { Assert-NewLockRow $badHash 0 $newKey } "$hashName must be 64 lowercase hex"
+  }
   $extraRow = New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10
   $extraRow | Add-Member -NotePropertyName extra -NotePropertyValue 1
   Assert-Throws { Assert-NewLockRow $extraRow 0 $newKey } 'fields changed'
@@ -1041,7 +1054,9 @@ try {
 
   # Existing rows are compared to the base branch. A pull request cannot edit that baseline.
   # Local runs that are not pull requests fall back to the copy below. New rows after the baseline
-  # must use bmw-v or mercedes-v. Historical bare v tags stay inside the baseline and are exempt.
+  # must use the brand prefix plus the version, such as bmw-v1.0.3-beta.1.
+  # contentDigest, zipSha256, and manifestSha256 must be 64 lowercase hex characters.
+  # Historical bare v tags stay inside the baseline and are exempt.
   $lock = Get-Content -LiteralPath (Join-Path $repo 'releases/versions.lock.json') -Raw | ConvertFrom-Json
   Assert-True ([string]$lock.schema -eq 'diagnostic-workstation.versions.lock/v1') 'versions lock schema'
   Assert-True ($lock.appendOnly -eq $true) 'versions lock must stay append-only'
