@@ -20,7 +20,7 @@ Each installation selects one profile, for example `brand.id= "bmw"`. The profil
 
 ### Current status
 
-The master installer in `installer/Master/` installs a catalog-pinned `mercedes-v*` or `bmw-v*` bundle into that brand's own folder and can fall back to an offline payload. `universal-v*` packages are retired. No approved brand ZIP is pinned in `catalog/catalog.json` yet, and placeholder signing keys are not production approval.
+The master installer in `installer/Master/` installs a catalog-pinned `mercedes-v*` or `bmw-v*` bundle into that brand's own folder and can fall back to an offline payload. `universal-v*` packages are retired. `catalog/catalog.json` pins `bmw-v1.0.2-beta.1` only. That build is not published: no tag and no GitHub release yet. Mercedes `0.1.3-beta.3` was voided and is not pinned. Mercedes `0.1.3-beta.4` is pending. Placeholder signing keys are not production approval.
 
 `scripts/build-mercedes-bundle.py` and `scripts/build-bmw-bundle.py` produce `dist/mercedes-v<version>/` and `dist/bmw-v<version>/` (`workstation.zip` and `update-manifest.json`). The next Mercedes build is `0.1.3-beta.3`. The next BMW build is `1.0.2-beta.1`. The manual bundle workflows upload artifacts only. They do not publish a GitHub release. An existing machine `profile.json` is kept; a new install receives the bundle default. `apps.json` is not in either bundle.
 
