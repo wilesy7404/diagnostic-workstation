@@ -72,11 +72,18 @@ try {
   Assert-True (-not $agent.Contains($retired)) 'UpdateAgent still matches retired v* tags'
   Assert-True (-not $runner.Contains($retired)) 'UpdateRunner still matches retired v* tags'
   Assert-True (-not $runner.Contains('$Tag.Substring(1)')) 'UpdateRunner still strips a single v from the tag'
-  foreach ($name in @('UpdateAgent.ps1','UpdateRunner.ps1','Launcher.ps1')) {
+  $bundleScripts = @(Get-ChildItem -LiteralPath $extract -Recurse -Filter '*.ps1' -File)
+  Assert-True ($bundleScripts.Count -gt 0) 'bundle has no scripts'
+  foreach ($file in $bundleScripts) {
     $tokens = $null
     $errors = $null
-    [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $extract $name), [ref]$tokens, [ref]$errors)
-    if (@($errors).Count -gt 0) { throw ($name + ' did not parse: ' + $errors[0].Message) }
+    [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+    if (@($errors).Count -gt 0) { throw ($file.Name + ' did not parse: ' + $errors[0].Message) }
+    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $nonAscii = $false
+    foreach ($byte in $bytes) { if ($byte -gt 127) { $nonAscii = $true; break } }
+    if ($nonAscii -and -not $hasBom) { throw ($file.Name + ' is non-ASCII without a UTF-8 BOM') }
   }
   $dock = [System.IO.File]::ReadAllBytes((Join-Path $extract 'Dock.ps1'))
   Assert-True ($dock.Length -ge 3 -and $dock[0] -eq 0xEF -and $dock[1] -eq 0xBB -and $dock[2] -eq 0xBF) 'Dock.ps1 lost the live-export UTF-8 BOM'

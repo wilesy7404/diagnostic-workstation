@@ -52,8 +52,32 @@ EXCLUDED = {
 PACKAGED_FILE_COUNT = 20
 
 
+UTF8_BOM = b"\xef\xbb\xbf"
+
+
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def normalize_ps1_bom(staged: list[tuple[str, bytes]]) -> list[tuple[str, bytes]]:
+    """Prepend a UTF-8 BOM to non-ASCII scripts that do not already have one.
+
+    ASCII scripts and scripts that already start with EF BB BF are unchanged.
+    No other bytes are rewritten.
+    """
+    normalized = []
+    changed = []
+    for path, data in staged:
+        if path.lower().endswith(".ps1") and any(byte > 127 for byte in data) and not data.startswith(UTF8_BOM):
+            changed.append(path)
+            data = UTF8_BOM + data
+        normalized.append((path, data))
+    if changed:
+        for path in changed:
+            print(f"normalized UTF-8 BOM {path}")
+    else:
+        print("normalized UTF-8 BOM (none)")
+    return normalized
 
 
 def canonical_version_json(version: str) -> bytes:
@@ -197,6 +221,7 @@ def main(argv: list[str]) -> int:
     if len(staged) != PACKAGED_FILE_COUNT:
         raise SystemExit(f"expected {PACKAGED_FILE_COUNT} packaged files, got {len(staged)}")
     assert_current_package(staged, version)
+    staged = normalize_ps1_bom(staged)
     out_dir = ROOT / "dist" / f"mercedes-v{version}"
     out_dir.mkdir(parents=True, exist_ok=True)
     zip_path = out_dir / "workstation.zip"

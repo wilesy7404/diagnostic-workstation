@@ -273,6 +273,30 @@ try {
   }
   $packagedVersion = [System.IO.File]::ReadAllText((Join-Path $extract 'version.json'))
   Assert-True ($packagedVersion -eq '{"version":"0.1.3-beta.3"}') 'version.json is not the canonical beta.3 file'
+  $bundleScripts = @(Get-ChildItem -LiteralPath $extract -Recurse -Filter '*.ps1' -File)
+  Assert-True ($bundleScripts.Count -gt 0) 'bundle has no scripts'
+  foreach ($file in $bundleScripts) {
+    $tokens = $null
+    $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+    if (@($errors).Count -gt 0) { throw ($file.Name + ' did not parse: ' + $errors[0].Message) }
+    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $nonAscii = $false
+    foreach ($byte in $bytes) { if ($byte -gt 127) { $nonAscii = $true; break } }
+    if ($nonAscii -and -not $hasBom) { throw ($file.Name + ' is non-ASCII without a UTF-8 BOM') }
+  }
+  foreach ($name in @('SystemPanel.ps1','WorkstationControls.ps1')) {
+    $sourceBytes = [System.IO.File]::ReadAllBytes((Join-Path $source $name))
+    $bundleBytes = [System.IO.File]::ReadAllBytes((Join-Path $extract $name))
+    $sourceHasBom = ($sourceBytes.Length -ge 3 -and $sourceBytes[0] -eq 0xEF -and $sourceBytes[1] -eq 0xBB -and $sourceBytes[2] -eq 0xBF)
+    Assert-True (-not $sourceHasBom) "$name source was rewritten with a BOM"
+    Assert-True ($bundleBytes.Length -eq ($sourceBytes.Length + 3)) "$name bundle size is not the source plus a BOM"
+    Assert-True ($bundleBytes[0] -eq 0xEF -and $bundleBytes[1] -eq 0xBB -and $bundleBytes[2] -eq 0xBF) "$name bundle is missing the UTF-8 BOM"
+    for ($i = 0; $i -lt $sourceBytes.Length; $i++) {
+      if ($bundleBytes[$i + 3] -ne $sourceBytes[$i]) { throw "$name changed a byte other than the prepended BOM" }
+    }
+  }
   Assert-True (Test-Path -LiteralPath (Join-Path $extract 'profile.json')) 'extracted bundle is missing profile.json'
   Assert-True (Test-Path -LiteralPath (Join-Path $extract 'branding/mercedes.png')) 'extracted bundle is missing the Mercedes logo'
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $extract 'branding/bmw.png'))) 'extracted bundle contains the BMW logo'
