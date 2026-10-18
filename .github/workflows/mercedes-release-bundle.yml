@@ -1,13 +1,14 @@
 name: Build Mercedes release bundle
 
 # Manual bundle only. This workflow does not create a release, push a tag, or publish assets.
+# The version input is passed through. A later version does not require editing a guard.
 on:
   workflow_dispatch:
     inputs:
       version:
         description: 'Mercedes version without the tag prefix'
         required: true
-        default: '0.1.3-beta.2'
+        default: '0.1.3-beta.3'
         type: string
 
 permissions:
@@ -30,12 +31,13 @@ jobs:
           "$RUNNER_TEMP/pwsh/pwsh" -NoProfile -File scripts/Test-MercedesUpdater.ps1
       - name: Build workstation.zip and update-manifest.json
         shell: bash
+        env:
+          BUNDLE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          test "${{ inputs.version }}" = "0.1.3-beta.2"
-          python3 scripts/build-mercedes-bundle.py "${{ inputs.version }}"
-          test -f "dist/mercedes-v${{ inputs.version }}/workstation.zip"
-          test -f "dist/mercedes-v${{ inputs.version }}/update-manifest.json"
+          python3 scripts/build-mercedes-bundle.py "$BUNDLE_VERSION"
+          test -f "dist/mercedes-v${BUNDLE_VERSION}/workstation.zip"
+          test -f "dist/mercedes-v${BUNDLE_VERSION}/update-manifest.json"
           echo "Bundle is an Actions artifact only. No GitHub Release was created."
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4

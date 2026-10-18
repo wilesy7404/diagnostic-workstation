@@ -4,6 +4,8 @@
 $ErrorActionPreference = 'Stop'
 
 $script:MasterRepo = 'wilesy7404/diagnostic-workstation'
+# Machine-local files. A bundle that contains one of these is rejected, and an
+# existing copy is carried onto the new tree.
 $script:MasterPreserveFiles = @(
   'apps.json',
   'controls-pin.json',
@@ -13,6 +15,12 @@ $script:MasterPreserveFiles = @(
   'update-progress.json',
   'device.json',
   'secrets.json'
+)
+
+# Ships in the bundle as the fresh-install default. If the brand folder already
+# has this file, that copy is carried across and the bundle copy is not used.
+$script:MasterCarryExistingFiles = @(
+  'profile.json'
 )
 
 function Test-MasterHostWindows {

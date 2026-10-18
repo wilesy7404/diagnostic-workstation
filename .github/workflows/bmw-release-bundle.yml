@@ -1,0 +1,49 @@
+name: Build BMW release bundle
+
+# Manual bundle only. This workflow does not create a release, push a tag, or publish assets.
+# The version input is passed through. A later version does not require editing a guard.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'BMW version without the bmw-v tag prefix'
+        required: true
+        default: '1.0.2-beta.1'
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check BMW bundle script
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/pwsh.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.4.12/powershell-7.4.12-linux-x64.tar.gz
+          mkdir -p "$RUNNER_TEMP/pwsh"
+          tar -xzf /tmp/pwsh.tar.gz -C "$RUNNER_TEMP/pwsh"
+          chmod +x "$RUNNER_TEMP/pwsh/pwsh"
+          "$RUNNER_TEMP/pwsh/pwsh" -NoProfile -File scripts/Test-BmwBundle.ps1
+      - name: Build workstation.zip and update-manifest.json
+        shell: bash
+        env:
+          BUNDLE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/build-bmw-bundle.py "$BUNDLE_VERSION"
+          test -f "dist/bmw-v${BUNDLE_VERSION}/workstation.zip"
+          test -f "dist/bmw-v${BUNDLE_VERSION}/update-manifest.json"
+          echo "Bundle is an Actions artifact only. No GitHub Release was created."
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bmw-v${{ inputs.version }}
+          path: |
+            dist/bmw-v${{ inputs.version }}/workstation.zip
+            dist/bmw-v${{ inputs.version }}/update-manifest.json
+          if-no-files-found: error

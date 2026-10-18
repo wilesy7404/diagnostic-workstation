@@ -717,6 +717,64 @@ try {
   } 'older than the last accepted catalog'
 
   Assert-True (-not (Test-Path (Join-Path $repo 'installer/Master/Probe-DefenderControlCli.ps1'))) 'the Defender Control probe is still present'
+
+  Assert-True (-not (Test-PreservedLeaf 'profile.json')) 'profile.json was rejected as machine-local'
+  Assert-True (Test-PreservedLeaf 'apps.json') 'apps.json is no longer machine-local'
+  $profileLauncher = [System.Text.Encoding]::UTF8.GetBytes("Write-Output 'profile-launcher'`n")
+  $profileVersion = [System.Text.Encoding]::UTF8.GetBytes('{"version":"1.2.3-beta.1"}')
+  $bundleProfile = [System.Text.Encoding]::UTF8.GetBytes('{"id":"mercedes","displayName":"BundleDefault"}')
+  $profileZip = Join-Path $temp 'profile-bundle.zip'
+  New-FixtureZip $profileZip @{ 'Launcher.ps1' = $profileLauncher; 'version.json' = $profileVersion; 'profile.json' = $bundleProfile }
+  $profileManifest = Join-Path $temp 'profile-manifest.json'
+  $profileRelease = [pscustomobject]@{
+    tag = 'mercedes-v1.2.3-beta.1'; version = '1.2.3-beta.1'; sha256 = (Get-Sha256Hex $profileZip); bytes = (Get-Item $profileZip).Length
+  }
+  $profileObject = [ordered]@{
+    schemaVersion = 1; brand = 'mercedes'; version = '1.2.3-beta.1'; tag = 'mercedes-v1.2.3-beta.1'; asset = 'workstation.zip'
+    sha256 = $profileRelease.sha256; bytes = $profileRelease.bytes
+    files = @(
+      [ordered]@{ path = 'Launcher.ps1'; sha256 = (Get-BytesSha256 $profileLauncher); bytes = $profileLauncher.Length },
+      [ordered]@{ path = 'version.json'; sha256 = (Get-BytesSha256 $profileVersion); bytes = $profileVersion.Length },
+      [ordered]@{ path = 'profile.json'; sha256 = (Get-BytesSha256 $bundleProfile); bytes = $bundleProfile.Length }
+    )
+  }
+  Write-Utf8NoBom $profileManifest (($profileObject | ConvertTo-Json -Depth 6) + "`n")
+  $profileStage = Join-Path $temp 'profile-stage'
+  $opened = Open-VerifiedBundle -Brand 'mercedes' -Release $profileRelease -ZipPath $profileZip -ManifestPath $profileManifest -Staging $profileStage
+  Assert-True ([string]$opened.brand -eq 'mercedes') 'profile bundle was rejected'
+  Assert-True (([System.IO.File]::ReadAllText((Join-Path $profileStage 'profile.json'))) -match 'BundleDefault') 'bundle profile was not expanded'
+
+  $parent = Join-Path $temp 'profile-parent'
+  New-Item -ItemType Directory -Path $parent | Out-Null
+  $keptRoot = Join-Path $parent 'KeptProfile'
+  New-Item -ItemType Directory -Path $keptRoot | Out-Null
+  Write-Utf8NoBom (Join-Path $keptRoot 'profile.json') '{"id":"mercedes","displayName":"MachineLocal"}'
+  $keptStage = Join-Path $parent 'kept-stage'
+  New-Item -ItemType Directory -Path $keptStage | Out-Null
+  Write-Utf8NoBom (Join-Path $keptStage 'profile.json') '{"id":"mercedes","displayName":"BundleDefault"}'
+  Write-Utf8NoBom (Join-Path $keptStage 'Launcher.ps1') "Write-Output 'new'`n"
+  Install-VerifiedTree -Staging $keptStage -Root $keptRoot -Brand 'mercedes' -Tag 'mercedes-v1.2.3-beta.1' -Version '1.2.3-beta.1' -ZipSha256 ('c' * 64)
+  Assert-True (([System.IO.File]::ReadAllText((Join-Path $keptRoot 'profile.json'))) -match 'MachineLocal') 'existing profile.json was overwritten'
+  Assert-True (([System.IO.File]::ReadAllText((Join-Path $keptRoot 'Launcher.ps1'))) -match 'new') 'launcher was not installed beside a kept profile'
+
+  $freshRoot = Join-Path $parent 'FreshProfile'
+  $freshStage = Join-Path $parent 'fresh-stage'
+  New-Item -ItemType Directory -Path $freshStage | Out-Null
+  Write-Utf8NoBom (Join-Path $freshStage 'profile.json') '{"id":"mercedes","displayName":"BundleDefault"}'
+  Write-Utf8NoBom (Join-Path $freshStage 'Launcher.ps1') "Write-Output 'fresh'`n"
+  Install-VerifiedTree -Staging $freshStage -Root $freshRoot -Brand 'mercedes' -Tag 'mercedes-v1.2.3-beta.1' -Version '1.2.3-beta.1' -ZipSha256 ('d' * 64)
+  Assert-True (([System.IO.File]::ReadAllText((Join-Path $freshRoot 'profile.json'))) -match 'BundleDefault') 'fresh install did not receive profile.json'
+
+  $emptyRoot = Join-Path $parent 'EmptyProfile'
+  New-Item -ItemType Directory -Path $emptyRoot | Out-Null
+  Write-Utf8NoBom (Join-Path $emptyRoot 'Launcher.ps1') "Write-Output 'old'`n"
+  $emptyStage = Join-Path $parent 'empty-stage'
+  New-Item -ItemType Directory -Path $emptyStage | Out-Null
+  Write-Utf8NoBom (Join-Path $emptyStage 'profile.json') '{"id":"bmw","displayName":"BundleDefault"}'
+  Write-Utf8NoBom (Join-Path $emptyStage 'Launcher.ps1') "Write-Output 'replaced'`n"
+  Install-VerifiedTree -Staging $emptyStage -Root $emptyRoot -Brand 'bmw' -Tag 'bmw-v1.0.2-beta.1' -Version '1.0.2-beta.1' -ZipSha256 ('e' * 64)
+  Assert-True (([System.IO.File]::ReadAllText((Join-Path $emptyRoot 'profile.json'))) -match 'BundleDefault') 'install without profile.json dropped the bundle default'
+
   Write-Output 'Master installer checks passed.'
 } catch {
   Write-Output $_.Exception.Message

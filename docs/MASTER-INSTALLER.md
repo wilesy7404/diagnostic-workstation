@@ -29,7 +29,15 @@ No `mercedes-v*` or `bmw-v*` ZIP is pinned yet. Until a release is added to the 
 
 Other brand ids are refused. The installer copies `apps.json`, `controls-pin.json`, update status files, `logs\`, and `Backup-*` / `ControlBackup-*` folders into the new tree. A bundle that contains those machine-local files is rejected. User files that are not in the new bundle remain in the `*.prev-*` folder beside the install.
 
+`profile.json` does ship in the bundle. A new install receives that default. If the brand folder already has `profile.json`, the installer keeps the machine copy and does not overwrite it.
+
 `WorkstationManager.exe` is the supervisor for every brand. BMW still uses `Watchdog.ps1` until a later migration. This installer does not start either program and does not write Winlogon, shell, or Run values.
+
+## Bundle builds
+
+`scripts/build-mercedes-bundle.py` and `scripts/build-bmw-bundle.py` write `dist/<tag>/workstation.zip` and `update-manifest.json`. The manual workflows `mercedes-release-bundle.yml` and `bmw-release-bundle.yml` upload those files as Actions artifacts. They do not create a release, push a tag, or sign anything. `catalog/catalog.json` is not updated here.
+
+Each bundle ships only that brand's logo. `apps.json` stays out of both bundles. Mercedes `profile.json` and `Launcher.ps1` are taken from the source tree at build time, so their hashes change when PR #8 merges. BMW `Launcher.ps1` and `profile.json` are taken from `bundles/bmw/staging/` (PR #9) and their hashes are computed then. The BMW updater in the bundle looks for `bmw-v*` tags.
 
 ## Security steps
 
