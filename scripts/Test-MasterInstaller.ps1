@@ -1093,6 +1093,17 @@ try {
   for ($i = $lockExpected.Count; $i -lt $lockEntries.Count; $i++) {
     Assert-NewLockRow $lockEntries[$i] $i $appendedFieldKey
   }
+  $beta4Lock = $null
+  $beta4Index = -1
+  for ($beta4Index = 0; $beta4Index -lt $lockEntries.Count; $beta4Index++) {
+    if ([string]$lockEntries[$beta4Index].brand -ceq 'mercedes' -and [string]$lockEntries[$beta4Index].version -ceq '0.1.3-beta.4') {
+      $beta4Lock = $lockEntries[$beta4Index]
+      break
+    }
+  }
+  Assert-True ($null -ne $beta4Lock) 'mercedes beta.4 lock row is missing'
+  Assert-NewLockRow $beta4Lock $beta4Index $appendedFieldKey
+  Assert-True ([string]$beta4Lock.tag -ceq 'mercedes-v0.1.3-beta.4' -and [string]$beta4Lock.workflowRunId -ceq '39091982618' -and [string]$beta4Lock.zipSha256 -ceq [string]$mercedesPin.sha256 -and [string]$beta4Lock.manifestSha256 -ceq [string]$mercedesPin.manifestSha256) 'mercedes beta.4 lock row does not match the catalog pin'
   Assert-True ($lockEntries[4].voided -ceq $true -and $lockEntries[4].published -ceq $false -and $lockEntries[4].historical -ceq $true) 'mercedes beta.3 lock row is not voided'
   Assert-True ($lockEntries[5].zipSha256 -ceq [string]$bmwPin.sha256 -and $lockEntries[5].manifestSha256 -ceq [string]$bmwPin.manifestSha256 -and [int64]$lockEntries[5].zipBytes -ceq [int64]$bmwPin.bytes -and [int64]$lockEntries[5].manifestBytes -ceq [int64]$bmwPin.manifestBytes) 'bmw lock does not match the catalog pin'
 
