@@ -10,6 +10,7 @@ Backup-*/
 .env
 .env.*
 apps.json
+!bundles/bmw/staging/apps.json
 device.json
 secrets.json
 **/local-config/**
