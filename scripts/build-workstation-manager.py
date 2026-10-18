@@ -52,6 +52,11 @@ def build_env() -> dict[str, str]:
     return env
 
 
+def lf_bytes(data: bytes) -> bytes:
+    """Checkout on windows-latest rewrites text to CRLF. Embed the LF sources."""
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def stage_module(stage: Path, brand: str) -> None:
     if any(part in {"..", "/", "\\"} or part.startswith(".") for part in Path(brand).parts) or not brand:
         raise SystemExit(f"invalid brand {brand}")
@@ -60,9 +65,18 @@ def stage_module(stage: Path, brand: str) -> None:
         known = ", ".join(sorted(path.stem for path in LOGOS.glob("*.png")))
         raise SystemExit(f"no logo for {brand}; known brands: {known}")
     stage.mkdir(parents=True)
-    shutil.copyfile(MANAGER / "go.mod", stage / "go.mod")
-    shutil.copyfile(MANAGER / "main.go", stage / "main.go")
-    shutil.copytree(MANAGER / "assets", stage / "assets")
+    (stage / "go.mod").write_bytes(lf_bytes((MANAGER / "go.mod").read_bytes()))
+    (stage / "main.go").write_bytes(lf_bytes((MANAGER / "main.go").read_bytes()))
+    assets = stage / "assets"
+    for source in (MANAGER / "assets").rglob("*"):
+        if not source.is_file():
+            continue
+        dest = assets / source.relative_to(MANAGER / "assets")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        data = source.read_bytes()
+        if source.suffix.lower() != ".png":
+            data = lf_bytes(data)
+        dest.write_bytes(data)
     branding = stage / "assets" / "branding"
     if branding.exists():
         shutil.rmtree(branding)

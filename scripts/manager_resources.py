@@ -84,7 +84,8 @@ def template_problems(blob: bytes) -> list[str]:
     problems = []
     for name, allowed in TEMPLATES.items():
         path = ROOT / "manager" / "assets" / name
-        data = path.read_bytes()
+        # The compiler embeds LF. A Windows checkout may have CRLF in the working tree.
+        data = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         parsed = json.loads(data.decode("utf-8"))
         if not isinstance(parsed, dict):
             problems.append(f"{name} is not a JSON object")
