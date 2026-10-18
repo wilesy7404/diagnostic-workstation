@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       mercedes_run_id:
-        description: 'Actions run id for the Mercedes bundle artifact'
-        required: true
-        default: '39087424705'
+        description: 'Actions run id for the Mercedes bundle artifact. Used only when the catalog pins a Mercedes release.'
+        required: false
+        default: ''
         type: string
       bmw_run_id:
         description: 'Actions run id for the BMW bundle artifact'
@@ -68,15 +68,29 @@ jobs:
           BMW_RUN_ID: ${{ inputs.bmw_run_id }}
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path 'offline\mercedes-v0.1.3-beta.3' | Out-Null
-          New-Item -ItemType Directory -Force -Path 'offline\bmw-v1.0.2-beta.1' | Out-Null
-          gh run download $env:MERCEDES_RUN_ID --repo $env:GITHUB_REPOSITORY --name mercedes-v0.1.3-beta.3 --dir 'offline\mercedes-v0.1.3-beta.3'
-          gh run download $env:BMW_RUN_ID --repo $env:GITHUB_REPOSITORY --name bmw-v1.0.2-beta.1 --dir 'offline\bmw-v1.0.2-beta.1'
-          foreach ($dir in @('offline\mercedes-v0.1.3-beta.3', 'offline\bmw-v1.0.2-beta.1')) {
+          $catalog = Get-Content -LiteralPath 'catalog\catalog.json' -Raw | ConvertFrom-Json
+          $runIds = @{ mercedes = [string]$env:MERCEDES_RUN_ID; bmw = [string]$env:BMW_RUN_ID }
+          foreach ($brand in @($catalog.brands)) {
+            $id = [string]$brand.id
+            $releases = @()
+            foreach ($release in @($brand.releases)) {
+              if ($release -and -not [string]::IsNullOrWhiteSpace([string]$release.tag)) { $releases += $release }
+            }
+            if ($releases.Count -eq 0) {
+              Write-Output "NOT RUN $id: no pinned release, artifact not downloaded"
+              continue
+            }
+            if ($releases.Count -ne 1) { throw "$id has $($releases.Count) pinned releases. This workflow downloads one artifact per brand." }
+            $tag = [string]$releases[0].tag
+            $runId = [string]$runIds[$id]
+            if ([string]::IsNullOrWhiteSpace($runId)) { throw "catalog pins $tag but no run id was provided for $id" }
+            $dir = Join-Path 'offline' $tag
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            gh run download $runId --repo $env:GITHUB_REPOSITORY --name $tag --dir $dir
             foreach ($name in @('workstation.zip', 'update-manifest.json')) {
               $path = Join-Path $dir $name
               if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing $path" }
-              Write-Output "staged $path"
+              Write-Output "staged $path from run $runId"
             }
           }
 

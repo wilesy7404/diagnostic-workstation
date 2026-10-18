@@ -1,6 +1,7 @@
 # Hosted VM install test for the master installer. Windows PowerShell 5.1.
-# Runs Install-Master.ps1 -Source <offline> -OfflineOnly and records PASS, FAIL, or NOT PROVEN.
-# NOT PROVEN does not fail the job. Any FAIL does.
+# Runs Install-Master.ps1 -Source <offline> -OfflineOnly and records PASS, FAIL, NOT PROVEN, or NOT RUN.
+# NOT PROVEN and NOT RUN do not fail the job. Any FAIL does.
+# A brand with no catalog pin is NOT RUN. It is tested once a release is pinned.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$RepoRoot,
@@ -309,6 +310,135 @@ function Get-CatalogBrand($Catalog, [string]$Brand) {
   return $null
 }
 
+function Get-BrandReleases($Catalog, [string]$Brand) {
+  foreach ($item in @($Catalog.brands)) {
+    if ([string]$item.id -ne $Brand) { continue }
+    foreach ($release in @($item.releases)) {
+      if ($release -and -not [string]::IsNullOrWhiteSpace([string]$release.tag)) {
+        Write-Output $release -NoEnumerate
+      }
+    }
+    return
+  }
+}
+
+function Test-UiScriptName([string]$Name) {
+  $leaf = Split-Path -Leaf $Name
+  if ($leaf -eq 'Launcher.ps1' -or $leaf -eq 'Dock.ps1' -or $leaf -eq 'SystemPanel.ps1' -or $leaf -eq 'WorkstationShell.ps1') { return $true }
+  if ($leaf -like '*Controls*.ps1') { return $true }
+  return $false
+}
+
+function Get-XamlHereStrings([string]$Path) {
+  $tokens = $null
+  $errors = $null
+  [void][System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors)
+  $found = New-Object System.Collections.Generic.List[string]
+  foreach ($token in @($tokens)) {
+    $kind = [string]$token.Kind
+    if ($kind -ne 'HereStringLiteral' -and $kind -ne 'HereStringExpandable') { continue }
+    $raw = [string]$token.Text
+    if ($raw -notmatch 'schemas\.microsoft\.com/winfx/2006/xaml/presentation') { continue }
+    $lines = @([regex]::Split($raw, "\r?\n"))
+    if ($lines.Count -lt 3) { continue }
+    $inner = New-Object System.Collections.Generic.List[string]
+    for ($n = 1; $n -lt ($lines.Count - 1); $n++) { $inner.Add($lines[$n]) | Out-Null }
+    $found.Add(($inner -join "`n")) | Out-Null
+  }
+  return $found
+}
+
+function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+  $parseProblems = New-Object System.Collections.Generic.List[string]
+  $scriptCount = 0
+  $xamlCount = 0
+  $xamlProblems = New-Object System.Collections.Generic.List[string]
+  $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('vm-bundle-' + [guid]::NewGuid().ToString('n'))
+  New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+  try {
+    foreach ($entry in @($zip.Entries)) {
+      $name = [string]$entry.FullName
+      if ($name -notlike '*.ps1') { continue }
+      if ($name.EndsWith('/')) { continue }
+      $scriptCount++
+      $temp = Join-Path $tempDir ([guid]::NewGuid().ToString('n') + '.ps1')
+      $stream = $entry.Open()
+      try {
+        $file = [System.IO.File]::Create($temp)
+        try { $stream.CopyTo($file) } finally { $file.Dispose() }
+      } finally { $stream.Dispose() }
+      $tokens = $null
+      $errors = $null
+      [void][System.Management.Automation.Language.Parser]::ParseFile($temp, [ref]$tokens, [ref]$errors)
+      if (@($errors).Count -gt 0) {
+        $parseProblems.Add(('{0}: {1}' -f $name, [string]@($errors)[0].Message)) | Out-Null
+      }
+      if (-not (Test-UiScriptName $name)) { continue }
+      $snippets = @(Get-XamlHereStrings $temp)
+      foreach ($snippet in $snippets) {
+        $xamlCount++
+        try {
+          Add-Type -AssemblyName PresentationFramework
+          $ui = [System.Windows.Markup.XamlReader]::Parse($snippet)
+          if ($null -eq $ui) { throw 'XamlReader.Parse returned null' }
+        } catch {
+          $xamlProblems.Add(('{0}: {1}' -f $name, $_.Exception.Message)) | Out-Null
+        }
+      }
+    }
+  } finally {
+    $zip.Dispose()
+    if (Test-Path -LiteralPath $tempDir) { Remove-Item -LiteralPath $tempDir -Recurse -Force }
+  }
+  if ($scriptCount -eq 0) {
+    Add-Check $Brand 'ps1-parse' 'FAIL' 'the bundle zip has no .ps1 files to parse with Windows PowerShell 5.1'
+  } elseif ($parseProblems.Count -gt 0) {
+    Add-Check $Brand 'ps1-parse' 'FAIL' ("Windows PowerShell 5.1 parse failed: {0}" -f ($parseProblems -join '; '))
+  } else {
+    Add-Check $Brand 'ps1-parse' 'PASS' ("Windows PowerShell 5.1 parsed {0} .ps1 files in the bundle zip" -f $scriptCount)
+  }
+  if ($xamlCount -eq 0) {
+    Add-Check $Brand 'xaml' 'FAIL' 'launcher and controls scripts have no XAML here-strings to parse'
+  } elseif ($xamlProblems.Count -gt 0) {
+    Add-Check $Brand 'xaml' 'FAIL' ("XamlReader.Parse failed without showing a window: {0}" -f ($xamlProblems -join '; '))
+  } else {
+    Add-Check $Brand 'xaml' 'PASS' ("XamlReader.Parse loaded {0} XAML here-strings from launcher and controls scripts. No window was shown." -f $xamlCount)
+  }
+}
+
+function Add-DpiCheck {
+  try {
+    if (-not ('DpiProbe' -as [type])) {
+      Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class DpiProbe {
+  [DllImport("shcore.dll")] public static extern int GetProcessDpiAwareness(IntPtr hprocess, out int awareness);
+  [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
+  [DllImport("gdi32.dll")] public static extern int GetDeviceCaps(IntPtr hdc, int index);
+  [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+}
+'@
+    }
+    $awareness = 0
+    $hr = [DpiProbe]::GetProcessDpiAwareness([IntPtr]::Zero, [ref]$awareness)
+    if ($hr -ne 0) { throw "GetProcessDpiAwareness HRESULT $hr" }
+    if ($awareness -lt 0 -or $awareness -gt 2) { throw "GetProcessDpiAwareness returned $awareness" }
+    $dc = [DpiProbe]::GetDC([IntPtr]::Zero)
+    $pixels = [DpiProbe]::GetDeviceCaps($dc, 88)
+    [void][DpiProbe]::ReleaseDC([IntPtr]::Zero, $dc)
+    if ($pixels -le 0) { throw "LOGPIXELSX was $pixels" }
+    $logPixels = 'unreadable'
+    try { $logPixels = [string](Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name LogPixels -ErrorAction Stop).LogPixels } catch { }
+    Add-Check 'host' 'dpi-awareness' 'PASS' ("per-monitor awareness value {0} (0=unaware, 1=system, 2=per-monitor); LOGPIXELSX {1}; registry LogPixels {2}" -f $awareness, $pixels, $logPixels)
+  } catch {
+    Add-Check 'host' 'dpi-awareness' 'NOT PROVEN' ("DPI awareness could not be asserted: {0}" -f $_.Exception.Message)
+  }
+  Add-Check 'host' 'dpi-multimonitor' 'NOT PROVEN' 'DPI and multi-monitor layout are not proven on a headless hosted runner. This run does not change session scaling.'
+}
+
 $plan = Get-DefenderControlPlan
 New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null
 $transcript = Join-Path $ReportDir 'transcript.txt'
@@ -317,7 +447,7 @@ try { Start-Transcript -LiteralPath $transcript -Force | Out-Null } catch { }
 Add-Check 'host' 'reboot-logon' 'NOT PROVEN' 'A hosted runner does not reboot or start a new logon session, so startup-at-logon is not proven. Registry before and after the install is a separate check.'
 Add-Check 'host' 'tamper-protection' 'NOT PROVEN' 'Tamper Protection behavior is not proven. Hosted runner images usually have it off or unmanaged, and an interactive Tamper Protection prompt cannot be answered here.'
 Add-Check 'host' 'interactive-ui' 'NOT PROVEN' 'Interactive desktop UI is not proven. This run does not open the launcher, dock, or shell.'
-Add-Check 'host' 'dpi-multimonitor' 'NOT PROVEN' 'DPI and multi-monitor layout are not proven on a headless hosted runner.'
+Add-DpiCheck
 
 $catalogPath = Join-Path $RepoRoot 'catalog\catalog.json'
 $pinPath = Join-Path $RepoRoot 'catalog\catalog.sha256'
@@ -336,21 +466,31 @@ try {
 }
 
 $brands = @(
-  [pscustomobject]@{ Id = 'mercedes'; Tag = 'mercedes-v0.1.3-beta.3'; Version = '0.1.3-beta.3'; RunId = $MercedesRunId },
-  [pscustomobject]@{ Id = 'bmw'; Tag = 'bmw-v1.0.2-beta.1'; Version = '1.0.2-beta.1'; RunId = $BmwRunId }
+  [pscustomobject]@{ Id = 'mercedes'; RunId = $MercedesRunId },
+  [pscustomobject]@{ Id = 'bmw'; RunId = $BmwRunId }
 )
 
 if ($catalogReady) {
 foreach ($brand in $brands) {
   $id = [string]$brand.Id
-  $tag = [string]$brand.Tag
+  $releases = @(Get-BrandReleases $catalog $id)
+  if ($releases.Count -eq 0) {
+    Add-Check $id 'pin' 'NOT RUN' 'No approved release is pinned. This brand is skipped until a catalog pin exists.'
+    continue
+  }
+  if ($releases.Count -ne 1) {
+    Add-Check $id 'pin' 'FAIL' ("catalog pins {0} releases. This harness tests one pinned tag per brand." -f $releases.Count)
+    continue
+  }
+  $release = $releases[0]
+  $tag = [string]$release.tag
+  $pinnedVersion = [string]$release.version
   $root = Resolve-BrandInstallRoot $id
   $payload = Join-Path $offlineParent $tag
   $zipPath = Join-Path $payload 'workstation.zip'
   $manifestPath = Join-Path $payload 'update-manifest.json'
   $logStem = Join-Path $ReportDir ($id + '-install')
   try {
-    $release = Get-PinnedRelease $catalog $id $tag
     $catalogBrand = Get-CatalogBrand $catalog $id
     $pinOk = ($catalogPin -eq $catalogActual)
     $a = @()
@@ -358,17 +498,6 @@ foreach ($brand in $brands) {
       $a += New-Part 'PASS' ("catalog.sha256 matches catalog.json ({0})" -f $catalogActual)
     } else {
       $a += New-Part 'FAIL' ("catalog.sha256 {0} does not match catalog.json {1}" -f $catalogPin, $catalogActual)
-    }
-    if (-not $release) {
-      $a += New-Part 'FAIL' ("catalog has no pinned release {0}. Pass catalog_ref for the branch that pins it." -f $tag)
-      Add-CombinedCheck $id 'a' $a
-      Add-Check $id 'b' 'FAIL' 'Skipped. The catalog does not pin this tag, so a tampered zip was not the thing under test.'
-      Add-Check $id 'c' 'FAIL' 'Skipped. No pinned release to install.'
-      Add-Check $id 'd' 'FAIL' 'Skipped. No pinned release to install.'
-      Add-Check $id 'e' 'FAIL' 'Skipped. No pinned release to install.'
-      Add-Check $id 'f' 'FAIL' 'Skipped. No pinned release to install.'
-      Add-Check $id 'g' 'FAIL' 'Skipped. No pinned release to install.'
-      continue
     }
     if (-not (Test-Path -LiteralPath $zipPath) -or -not (Test-Path -LiteralPath $manifestPath)) {
       $a += New-Part 'FAIL' ("offline payload missing at {0}" -f $payload)
@@ -387,9 +516,12 @@ foreach ($brand in $brands) {
     $manifest = Read-JsonFile $manifestPath
     $pinMatch = ($zipHash -eq ([string]$release.sha256).ToLowerInvariant() -and [int64]$zipBytes -eq [int64]$release.bytes -and $manifestHash -eq ([string]$release.manifestSha256).ToLowerInvariant() -and [string]$manifest.sha256 -eq $zipHash)
     if ($pinMatch) {
-      $a += New-Part 'PASS' ("zip {0} ({1} bytes) and manifest {2} match the catalog pin" -f $zipHash, $zipBytes, $manifestHash)
+      $a += New-Part 'PASS' ("run {0} zip {1} ({2} bytes) and manifest {3} match the catalog pin for {4}" -f $brand.RunId, $zipHash, $zipBytes, $manifestHash, $tag)
+      Invoke-BundlePublishGate $id $zipPath
     } else {
-      $a += New-Part 'FAIL' ("payload does not match the catalog pin. zip={0} bytes={1} manifest={2} manifest.sha256={3}" -f $zipHash, $zipBytes, $manifestHash, [string]$manifest.sha256)
+      $a += New-Part 'FAIL' ("downloaded artifact does not match the catalog pin. zip={0} bytes={1} manifest={2} manifest.sha256={3}" -f $zipHash, $zipBytes, $manifestHash, [string]$manifest.sha256)
+      Add-Check $id 'ps1-parse' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
+      Add-Check $id 'xaml' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
     }
 
     $startupBefore = Get-StartupSnapshot
@@ -489,7 +621,7 @@ foreach ($brand in $brands) {
     if (Test-Path -LiteralPath $versionPath) {
       $versionText = [System.IO.File]::ReadAllText($versionPath).Trim()
       $versionValue = [string](($versionText | ConvertFrom-Json).version)
-      if ($versionValue -eq [string]$brand.Version -and $versionText -eq ('{"version":"' + $brand.Version + '"}')) {
+      if ($versionValue -eq $pinnedVersion -and $versionText -eq ('{"version":"' + $pinnedVersion + '"}')) {
         $d += New-Part 'PASS' ("version.json is {0}" -f $versionText)
       } else {
         $d += New-Part 'FAIL' ("version.json is {0}" -f $versionText)
@@ -774,18 +906,19 @@ try {
 $failCount = @($script:Results | Where-Object { $_.Status -eq 'FAIL' }).Count
 $passCount = @($script:Results | Where-Object { $_.Status -eq 'PASS' }).Count
 $unprovenCount = @($script:Results | Where-Object { $_.Status -eq 'NOT PROVEN' }).Count
+$notRunCount = @($script:Results | Where-Object { $_.Status -eq 'NOT RUN' }).Count
 $summary = New-Object System.Collections.Generic.List[string]
 $summary.Add('# VM install test report')
 $summary.Add('')
 $summary.Add(('Result: {0}' -f $(if ($failCount -gt 0) { 'FAIL' } else { 'PASS' })))
-$summary.Add(('PASS {0}, FAIL {1}, NOT PROVEN {2}' -f $passCount, $failCount, $unprovenCount))
+$summary.Add(('PASS {0}, FAIL {1}, NOT PROVEN {2}, NOT RUN {3}' -f $passCount, $failCount, $unprovenCount, $notRunCount))
 $summary.Add(('Windows PowerShell {0}' -f $PSVersionTable.PSVersion.ToString()))
 $summary.Add(('Computer: {0}' -f $env:COMPUTERNAME))
 $summary.Add(('Catalog ref: {0}' -f $CatalogRef))
 $summary.Add(('Mercedes artifact run: {0}' -f $MercedesRunId))
 $summary.Add(('BMW artifact run: {0}' -f $BmwRunId))
 $summary.Add('')
-$summary.Add('NOT PROVEN is not a pass. A hosted runner cannot show reboot or logon startup, Tamper Protection, interactive UI, or DPI and multi-monitor. Defender and Windows Update end state are NOT PROVEN when the runner image does not expose them.')
+$summary.Add('NOT PROVEN is not a pass. NOT RUN means that brand has no catalog pin and was skipped. A hosted runner cannot show reboot or logon startup, Tamper Protection, interactive UI, or DPI and multi-monitor layout. Defender and Windows Update end state are NOT PROVEN when the runner image does not expose them.')
 $summary.Add('')
 $summary.Add('## Checks')
 $summary.Add('')
