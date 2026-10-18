@@ -24,6 +24,8 @@ The master installer in `installer/Master/` installs a catalog-pinned `mercedes-
 
 `scripts/build-mercedes-bundle.py` and `scripts/build-bmw-bundle.py` produce `dist/mercedes-v<version>/` and `dist/bmw-v<version>/` (`workstation.zip` and `update-manifest.json`). Mercedes `0.1.3-beta.4` and BMW `1.0.2-beta.1` are both pinned, and neither is published. The manual bundle workflows upload artifacts only. They do not publish a GitHub release. An existing machine `profile.json` is kept; a new install receives the bundle default. `apps.json` is not in either bundle.
 
+`releases/versions.lock.json` is append-only. `sourceCommit` is the commit the tag points to, not proof of which commit built the zip. BMW `v1.0.1-beta.1`, `v1.0.1-beta.2`, and `v1.0.1-beta.3` all point at `186efe7531a6019dff2ebec56823de367d780a52` and have different zip bytes.
+
 Windows Update disable is wired to the vendored Sordum Windows Update Blocker. Windows Defender disable is a silent elevated step in the same installer: `Set-MpPreference` runs as SYSTEM through a transient scheduled task, and policy DWORDs are written in that elevated process. `WinDefend`, `WdNisSvc`, and `MDCoreSvc` are left running. See [master installer](docs/MASTER-INSTALLER.md).
 
 See [architecture](docs/ARCHITECTURE.md) and [release process](docs/RELEASES.md).

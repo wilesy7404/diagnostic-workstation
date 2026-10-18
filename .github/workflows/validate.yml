@@ -69,6 +69,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch the pull request base
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: git fetch --depth=1 origin "${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.2'

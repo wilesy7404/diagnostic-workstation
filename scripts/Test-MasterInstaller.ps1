@@ -89,6 +89,90 @@ function Assert-VersionsLockPrefix($ActualEntries, $ExpectedEntries) {
     }
   }
 }
+function New-SampleLockRow($Brand, $Version, $Tag, $Published, $Voided, $ZipBytes) {
+  return [pscustomobject]@{
+    brand = $Brand
+    version = $Version
+    tag = $Tag
+    contentDigest = $null
+    zipSha256 = $null
+    zipBytes = $ZipBytes
+    manifestSha256 = $null
+    manifestBytes = $null
+    fileCount = $null
+    sourceCommit = $null
+    workflowRunId = $null
+    historical = $false
+    neverReMint = $true
+    voided = $Voided
+    published = $Published
+    note = $null
+  }
+}
+function Assert-NewLockRow($Row, [int]$Index, [string]$FieldKey) {
+  $actualKey = Get-LockFieldKey $Row
+  if ($actualKey -cne $FieldKey) { throw "versions.lock[$Index] fields changed" }
+  foreach ($name in @('brand', 'version', 'tag')) {
+    $value = $Row.$name
+    if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) {
+      throw "versions.lock[$Index].$name type mismatch"
+    }
+  }
+  $prefix = $null
+  if ($Row.brand -ceq 'bmw') { $prefix = 'bmw-v' }
+  elseif ($Row.brand -ceq 'mercedes') { $prefix = 'mercedes-v' }
+  else { throw "versions.lock[$Index] brand is not approved" }
+  if (-not $Row.tag.StartsWith($prefix)) {
+    throw "versions.lock[$Index] tag does not match $prefix"
+  }
+  foreach ($name in @('contentDigest', 'zipSha256', 'manifestSha256', 'sourceCommit', 'workflowRunId', 'note')) {
+    $value = $Row.$name
+    if ($null -ne $value -and $value -isnot [string]) {
+      throw "versions.lock[$Index].$name type mismatch"
+    }
+  }
+  foreach ($name in @('zipBytes', 'manifestBytes', 'fileCount')) {
+    $value = $Row.$name
+    if ($null -ne $value -and -not (Test-LockNumber $value)) {
+      throw "versions.lock[$Index].$name type mismatch"
+    }
+  }
+  foreach ($name in @('historical', 'neverReMint', 'voided', 'published')) {
+    $value = $Row.$name
+    if ($value -isnot [bool]) {
+      throw "versions.lock[$Index].$name type mismatch"
+    }
+  }
+}
+function Convert-GitText($Output) {
+  if ($null -eq $Output) { return '' }
+  if ($Output -is [System.Array]) { return ($Output -join "`n") }
+  return [string]$Output
+}
+function Invoke-Git {
+  param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $output = & git @GitArgs 2>$null
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $previous
+  return [pscustomobject]@{ Code = $code; Output = $output }
+}
+function Get-VersionsLockFromGit([string]$BaseName) {
+  $spec = "origin/${BaseName}:releases/versions.lock.json"
+  $shown = Invoke-Git --no-pager show $spec
+  if ($shown.Code -ne 0 -and $env:GITHUB_EVENT_NAME -eq 'pull_request') {
+    Invoke-Git fetch --depth=1 origin "${BaseName}:refs/remotes/origin/${BaseName}" | Out-Null
+    $shown = Invoke-Git --no-pager show $spec
+  }
+  if ($shown.Code -ne 0 -or [string]::IsNullOrWhiteSpace((Convert-GitText $shown.Output))) {
+    if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+      throw "versions lock baseline missing: git show $spec failed"
+    }
+    return $null
+  }
+  return ((Convert-GitText $shown.Output) | ConvertFrom-Json)
+}
 function Get-BytesSha256([byte[]]$Bytes) {
   $sha = [System.Security.Cryptography.SHA256]::Create()
   try { $hash = $sha.ComputeHash($Bytes) } finally { $sha.Dispose() }
@@ -236,6 +320,8 @@ try {
   Assert-True ((Split-Path -Leaf $mercedesRoot) -eq 'DiagnosticWorkstation') 'Mercedes root changed'
   Assert-True ((Split-Path -Leaf $bmwRoot) -eq 'BMW-Stealth-Launcher') 'BMW root changed'
   Assert-Throws { Get-BrandAllowEntry 'ford' } 'not approved'
+  Assert-True ((Get-BrandAllowEntry 'mercedes').Supervisor -ceq 'WorkstationManager.exe') 'Mercedes supervisor changed'
+  Assert-True ((Get-BrandAllowEntry 'bmw').Supervisor -ceq 'Watchdog.ps1') 'BMW supervisor is not Watchdog.ps1'
   Assert-Throws { Assert-BrandTag 'mercedes' 'universal-v1.0.0' } 'universal-v tags are retired'
   Assert-Throws { Assert-BrandTag 'bmw' 'v1.0.1-beta.5' } 'bare v tags are retired'
   Assert-BrandTag 'mercedes' 'mercedes-v0.1.3-beta.2'
@@ -447,6 +533,7 @@ try {
   Assert-True (([System.IO.File]::ReadAllText((Join-Path $prev[0].FullName 'notes.txt'))) -eq 'USER-NOTE') 'user note was not moved aside'
   $marker = Read-JsonFile (Join-Path $installRoot '.installed-bundle.json')
   Assert-True ($marker.brand -eq 'mercedes') 'marker brand mismatch'
+  Assert-True ($marker.supervisor -ceq 'WorkstationManager.exe') 'Mercedes marker supervisor changed'
   Assert-True ($marker.shellRegistration -eq 'not-changed') 'marker recorded a shell change'
   Assert-True ($result.windowsUpdate -eq 'disabled') 'Windows Update tool was not recorded'
   Assert-True ($result.defender -eq 'disabled') 'Defender was not disabled'
@@ -873,6 +960,9 @@ try {
   Write-Utf8NoBom (Join-Path $emptyStage 'Launcher.ps1') "Write-Output 'replaced'`n"
   Install-VerifiedTree -Staging $emptyStage -Root $emptyRoot -Brand 'bmw' -Tag 'bmw-v1.0.2-beta.1' -Version '1.0.2-beta.1' -ZipSha256 ('e' * 64)
   Assert-True (([System.IO.File]::ReadAllText((Join-Path $emptyRoot 'profile.json'))) -match 'BundleDefault') 'install without profile.json dropped the bundle default'
+  $bmwMarker = Read-JsonFile (Join-Path $emptyRoot '.installed-bundle.json')
+  Assert-True ($bmwMarker.supervisor -ceq 'Watchdog.ps1') 'BMW marker supervisor is not Watchdog.ps1'
+  Assert-True ($bmwMarker.supervisorNote -ceq (Get-BrandAllowEntry 'bmw').SupervisorNote) 'BMW marker note does not match the allow map'
 
   # Case, field-set, reorder, and removal failures. An appended row stays allowed.
   $lockSample = @(
@@ -932,12 +1022,37 @@ try {
   Assert-Throws {
     Assert-VersionsLockPrefix @([pscustomobject]@{ brand = 'bmw'; version = '1'; zipBytes = 48955; voided = 1 }) $typedExpected
   } 'voided type mismatch'
+  $newKey = Get-LockFieldKey (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10)
+  Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10) 0 $newKey
+  Assert-NewLockRow (New-SampleLockRow 'mercedes' '0.1.3-beta.4' 'mercedes-v0.1.3-beta.4' $false $false 20) 1 $newKey
+  Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'v1.0.3-beta.1' $false $false 10) 0 $newKey } 'tag does not match bmw-v'
+  Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' $null $false $false 10) 0 $newKey } 'tag type mismatch'
+  Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'mercedes' '0.1.3-beta.4' 'bmw-v0.1.3-beta.4' $false $false 20) 1 $newKey } 'tag does not match mercedes-v'
+  Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' 'yes' $false 10) 0 $newKey } 'published type mismatch'
+  Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $null $false 10) 0 $newKey } 'published type mismatch'
+  Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false 1 10) 0 $newKey } 'voided type mismatch'
+  Assert-Throws { Assert-NewLockRow (New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false '10') 0 $newKey } 'zipBytes type mismatch'
+  $extraRow = New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10
+  $extraRow | Add-Member -NotePropertyName extra -NotePropertyValue 1
+  Assert-Throws { Assert-NewLockRow $extraRow 0 $newKey } 'fields changed'
+  $missingRow = New-SampleLockRow 'bmw' '1.0.3-beta.1' 'bmw-v1.0.3-beta.1' $false $false 10
+  $missingRow.PSObject.Properties.Remove('note')
+  Assert-Throws { Assert-NewLockRow $missingRow 0 $newKey } 'fields changed'
 
-  # Frozen prefix of releases/versions.lock.json. New rows may be appended after these.
-  # Do not edit, reorder, or drop an existing expected entry. Values are case-sensitive and type-strict.
+  # Existing rows are compared to the base branch. A pull request cannot edit that baseline.
+  # Local runs that are not pull requests fall back to the copy below. New rows after the baseline
+  # must use bmw-v or mercedes-v. Historical bare v tags stay inside the baseline and are exempt.
   $lock = Get-Content -LiteralPath (Join-Path $repo 'releases/versions.lock.json') -Raw | ConvertFrom-Json
   Assert-True ([string]$lock.schema -eq 'diagnostic-workstation.versions.lock/v1') 'versions lock schema'
   Assert-True ($lock.appendOnly -eq $true) 'versions lock must stay append-only'
+  Assert-True ($lock.note -match 'not build provenance') 'versions lock note must say sourceCommit is not build provenance'
+  $baseName = 'main'
+  if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_BASE_REF)) { $baseName = $env:GITHUB_BASE_REF }
+  $baseLock = Get-VersionsLockFromGit $baseName
+  $lockExpected = $null
+  if ($baseLock) {
+    $lockExpected = @($baseLock.entries)
+  } else {
   $lockExpected = @(
     [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.5'; tag = 'v1.0.1-beta.5'; contentDigest = $null; zipSha256 = '20e0f50cb73b72c5d3ebdcfe5302ac0b111916d01d6f9900bd5bc548e3c11cc3'; zipBytes = 15770; manifestSha256 = 'ca0aaf2a7b9b703f2b6264787a9b07df3d83bcb77059df7a0732150e7ebbc620'; manifestBytes = 142; fileCount = 5; sourceCommit = 'b072d0ebf0102e8bc06312d598cc0637fb900ad3'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
     [pscustomobject]@{ brand = 'mercedes'; version = '0.1.2-beta.1'; tag = $null; contentDigest = $null; zipSha256 = $null; zipBytes = $null; manifestSha256 = $null; manifestBytes = $null; fileCount = $null; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $null; note = 'hash not recorded; tag not recorded' },
@@ -951,9 +1066,14 @@ try {
     [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.4'; tag = 'v1.0.1-beta.4'; contentDigest = $null; zipSha256 = '7e9ba028d09dabe49b68de72aa0c0daf1036c18ef107bac52bca3296df076186'; zipBytes = 14643; manifestSha256 = '68ab06ec6e99310ea652bb5d782f96514dd4b8269fdd44f2389f2571feefafd1'; manifestBytes = 141; fileCount = 5; sourceCommit = '2c0034759611f49cf1521aa3d8659c3d40ed628f'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
     [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.4'; tag = 'mercedes-v0.1.3-beta.4'; contentDigest = 'b43616e9f62b1c254115eab33bbce36eeaf410b60e1de723f3125d18a5267779'; zipSha256 = 'ac8a82c0052cd1718cc050c5e28418efe5ed7afea104baaeb0940fcc612f661a'; zipBytes = 1321743; manifestSha256 = '8c5d857933654bcbfa5bc84140c513d2c3d83863e2e3c0cf956c7471891abdc9'; manifestBytes = 3338; fileCount = 20; sourceCommit = '2b138bf07b0b083615a76a7c16da5e27f16b75e8'; workflowRunId = '39091982618'; historical = $false; neverReMint = $true; voided = $false; published = $false; note = 'Pinned in catalog serial 3 from Actions run 39091982618. Not tagged and not published.' }
   )
+  }
   $lockEntries = @($lock.entries)
   Assert-VersionsLockPrefix $lockEntries $lockExpected
   Assert-LockRowIdentities $lockEntries
+  $appendedFieldKey = Get-LockFieldKey $lockExpected[0]
+  for ($i = $lockExpected.Count; $i -lt $lockEntries.Count; $i++) {
+    Assert-NewLockRow $lockEntries[$i] $i $appendedFieldKey
+  }
   Assert-True ($lockEntries[4].voided -ceq $true -and $lockEntries[4].published -ceq $false -and $lockEntries[4].historical -ceq $true) 'mercedes beta.3 lock row is not voided'
   Assert-True ($lockEntries[5].zipSha256 -ceq [string]$bmwPin.sha256 -and $lockEntries[5].manifestSha256 -ceq [string]$bmwPin.manifestSha256 -and [int64]$lockEntries[5].zipBytes -ceq [int64]$bmwPin.bytes -and [int64]$lockEntries[5].manifestBytes -ceq [int64]$bmwPin.manifestBytes) 'bmw lock does not match the catalog pin'
 
