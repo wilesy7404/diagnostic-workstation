@@ -208,7 +208,13 @@ Assert-True ((Get-ReleaseSummary "# Hello`r`n`nSecond") -eq 'Hello') 'release su
 Assert-True ((Get-ReleaseSummary '') -eq '') 'empty release notes were not skipped'
 
 $launcher = Get-Content -LiteralPath (Join-Path $source 'Launcher.ps1') -Raw
-Assert-True ($launcher -match '#C0C6CE' -and $launcher -match '#D0D5DB') 'Launcher silver tweaks are missing'
+Assert-True ($launcher -match '#C0C6CE') 'Launcher silver accent is missing'
+Assert-True ($launcher -notmatch '#D0D5DB') 'Launcher still uses the retired admin silver'
+Assert-True ($launcher -match 'DWMWA_WINDOW_CORNER_PREFERENCE') 'Admin dialog is missing the rounded-corner chrome'
+Assert-True ($launcher -match 'BorderThickness="0"') 'Admin dialog still has an outer border'
+Assert-True ($launcher -match 'No AllowsTransparency') 'Admin dialog does not record the opaque chrome'
+Assert-True ($launcher -notmatch 'AllowsTransparency\s*=') 'Admin dialog sets AllowsTransparency'
+Assert-True ($launcher -match 'Bold description text on home cards') 'Bold card description setting is missing'
 Assert-True ($launcher -match 'offline.\{.s=.Offline') 'footer does not show offline'
 Assert-True ($launcher -notmatch 'UNIVERSAL_BRAND_WORKSTATION') 'footer still uses the long brand status'
 Assert-True ($launcher -match 'LAUNCHER SETTINGS') 'settings popup was removed'

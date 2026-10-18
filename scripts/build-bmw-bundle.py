@@ -3,8 +3,8 @@
 
 Bytes for unchanged files come from the live export zip so the UTF-8 BOM the
 git copies lost is preserved. Launcher.ps1 and profile.json are swapped in from
-bundles/bmw/staging (PR #9). Their hashes are computed at build time. apps.json
-is left out. version.json is generated for the requested version (default
+bundles/bmw/staging. Their hashes are computed at build time. apps.json is left
+out. version.json is generated for the requested version (default
 1.0.2-beta.1). The shipped updater is the live-export updater retargeted at
 bmw-v* tags.
 """
@@ -173,7 +173,7 @@ def read_staging_file(staging: Path, name: str) -> bytes:
     path = staging / name
     if not path.is_file():
         raise SystemExit(
-            f"missing {path}. PR #9 adds bundles/bmw/staging/{name}. "
+            f"missing {path}. The BMW bundle reads {name} from bundles/bmw/staging. "
             "This build computes that file's hash and does not pin it."
         )
     return path.read_bytes()

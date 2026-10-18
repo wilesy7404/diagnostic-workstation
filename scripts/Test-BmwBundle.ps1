@@ -16,23 +16,16 @@ Assert-True ($workflow -match "default:\s*'1\.0\.2-beta\.1'") 'BMW workflow defa
 Assert-True ($workflow -notmatch 'inputs\.version \}\}"\s*=') 'BMW workflow hard-pins one version'
 
 $staging = Join-Path $repo 'bundles/bmw/staging'
-$haveStaging = (Test-Path -LiteralPath (Join-Path $staging 'Launcher.ps1')) -and (Test-Path -LiteralPath (Join-Path $staging 'profile.json'))
+$stagingLauncher = Join-Path $staging 'Launcher.ps1'
+$stagingProfile = Join-Path $staging 'profile.json'
+if (-not (Test-Path -LiteralPath $stagingLauncher) -or -not (Test-Path -LiteralPath $stagingProfile)) {
+  throw 'bundles/bmw/staging is missing Launcher.ps1 or profile.json'
+}
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('bmw-bundle-' + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
-  $fixture = Join-Path $temp 'staging'
-  New-Item -ItemType Directory -Path $fixture | Out-Null
-  if ($haveStaging) {
-    Copy-Item -LiteralPath (Join-Path $staging 'Launcher.ps1') -Destination (Join-Path $fixture 'Launcher.ps1')
-    Copy-Item -LiteralPath (Join-Path $staging 'profile.json') -Destination (Join-Path $fixture 'profile.json')
-  } else {
-    # PR #9 is not on main yet. Exercise the packager with a stand-in that
-    # matches the guards. The real hashes are computed when staging exists.
-    [System.IO.File]::WriteAllText((Join-Path $fixture 'Launcher.ps1'), "# BMW Diagnostic System`nWrite-Output 'fixture'`n")
-    [System.IO.File]::WriteAllText((Join-Path $fixture 'profile.json'), '{"id":"bmw","displayName":"BMW","boldCardDescription":false}' + "`n")
-  }
   $out = Join-Path $temp 'dist'
-  & python3 (Join-Path $repo 'scripts/build-bmw-bundle.py') '1.0.2-beta.1' $fixture $out
+  & python3 (Join-Path $repo 'scripts/build-bmw-bundle.py') '1.0.2-beta.1' $staging $out
   if ($LASTEXITCODE -ne 0) { throw 'BMW bundle build failed' }
   $dist = Join-Path $out 'bmw-v1.0.2-beta.1'
   $manifest = Get-Content -LiteralPath (Join-Path $dist 'update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -87,22 +80,27 @@ try {
   }
   $dock = [System.IO.File]::ReadAllBytes((Join-Path $extract 'Dock.ps1'))
   Assert-True ($dock.Length -ge 3 -and $dock[0] -eq 0xEF -and $dock[1] -eq 0xBB -and $dock[2] -eq 0xBF) 'Dock.ps1 lost the live-export UTF-8 BOM'
+  $packedLauncher = (Get-FileHash -LiteralPath (Join-Path $extract 'Launcher.ps1') -Algorithm SHA256).Hash
+  $packedProfile = (Get-FileHash -LiteralPath (Join-Path $extract 'profile.json') -Algorithm SHA256).Hash
+  $wantLauncher = (Get-FileHash -LiteralPath $stagingLauncher -Algorithm SHA256).Hash
+  $wantProfile = (Get-FileHash -LiteralPath $stagingProfile -Algorithm SHA256).Hash
+  Assert-True ($packedLauncher -eq $wantLauncher) 'bundle Launcher.ps1 is not the staging file'
+  Assert-True ($packedProfile -eq $wantProfile) 'bundle profile.json is not the staging file'
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $extract 'apps.json'))) 'staging apps.json was packaged'
 
-  & python3 (Join-Path $repo 'scripts/build-bmw-bundle.py') '1.0.2-beta.2' $fixture (Join-Path $temp 'later')
+  & python3 (Join-Path $repo 'scripts/build-bmw-bundle.py') '1.0.2-beta.2' $staging (Join-Path $temp 'later')
   if ($LASTEXITCODE -ne 0) { throw 'parameterized BMW bundle build failed' }
   $laterManifest = Get-Content -LiteralPath (Join-Path $temp 'later/bmw-v1.0.2-beta.2/update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
   Assert-True ($laterManifest.tag -eq 'bmw-v1.0.2-beta.2') 'a later BMW version required a guard edit'
 
-  if (-not $haveStaging) {
-    & python3 (Join-Path $repo 'scripts/build-bmw-bundle.py') '1.0.2-beta.1' $staging (Join-Path $temp 'missing')
-    if ($LASTEXITCODE -eq 0) { throw 'BMW build succeeded without PR #9 staging files' }
-  }
+  & python3 (Join-Path $repo 'scripts/build-bmw-bundle.py') '1.0.2-beta.1'
+  if ($LASTEXITCODE -ne 0) { throw 'default BMW bundle build failed' }
+  $defaultZip = Join-Path $repo 'dist/bmw-v1.0.2-beta.1/workstation.zip'
+  Assert-True (Test-Path -LiteralPath $defaultZip) 'default BMW build did not write workstation.zip'
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+  $defaultOut = Join-Path $repo 'dist/bmw-v1.0.2-beta.1'
+  if (Test-Path -LiteralPath $defaultOut) { Remove-Item -LiteralPath $defaultOut -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
-if ($haveStaging) {
-  Write-Output 'BMW bundle checks passed (staging files present)'
-} else {
-  Write-Output 'BMW bundle checks passed (staging files arrive with PR #9; hashes were not pinned)'
-}
+Write-Output 'BMW bundle checks passed'

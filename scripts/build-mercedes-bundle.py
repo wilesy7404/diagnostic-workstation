@@ -27,8 +27,8 @@ OWN_LOGO = "branding/mercedes.png"
 CHANGED = {
     "Launcher.ps1",
     "UpdateRunner.ps1",
-    # PR #8 edits profile.json. It stays in the bundle, but its hash is taken
-    # from the source tree at build time instead of the Oct 14 manifest.
+    # Approved live profile.json (boldCardDescription). It stays in the bundle.
+    # Its hash is taken from the source tree at build time.
     "profile.json",
 }
 # The Oct 14 BUILD-MANIFEST still records the pre-change export.
@@ -155,9 +155,14 @@ def assert_current_package(staged: list[tuple[str, bytes]], version: str) -> Non
         if sha256(data) != want_hash or len(data) != want_bytes:
             raise SystemExit(f"packaged {path} is not the approved file")
     launcher = files["Launcher.ps1"].decode("utf-8-sig")
-    # #D0D5DB is not required: PR #8 keeps LAUNCHER SETTINGS and #C0C6CE and drops #D0D5DB.
     if "LAUNCHER SETTINGS" not in launcher or "#C0C6CE" not in launcher:
         raise SystemExit("packaged Launcher.ps1 is not the current Mercedes launcher")
+    if "#D0D5DB" in launcher or "DWMWA_WINDOW_CORNER_PREFERENCE" not in launcher:
+        raise SystemExit("packaged Launcher.ps1 is not the approved rounded admin launcher")
+    if "Bold description text on home cards" not in launcher or "No AllowsTransparency" not in launcher:
+        raise SystemExit("packaged Launcher.ps1 is missing the approved admin chrome")
+    if "AllowsTransparency=" in launcher:
+        raise SystemExit("packaged Launcher.ps1 sets AllowsTransparency")
     agent = files["UpdateAgent.ps1"].decode("utf-8-sig")
     templates = re.findall(r"<ControlTemplate(?:\s[^>]*)?>", agent)
     if "Software Update" not in agent or not templates or any(XAML_NS not in item for item in templates):
