@@ -9,7 +9,7 @@
     "universal-v",
     "v"
   ],
-  "note": "mercedes-v0.1.3-beta.3 and bmw-v1.0.2-beta.1 are pinned from Actions artifacts. They are not published: no tag and no GitHub release yet. mercedes-v0.1.3-beta.1 and mercedes-v0.1.3-beta.2 stay unpinned. universal-v and bare v tags stay retired. The old BMW v1.0.1-beta.5 core package is not an approved master bundle.",
+  "note": "bmw-v1.0.2-beta.1 is pinned from an Actions artifact. It is not published: no tag and no GitHub release yet. mercedes-v0.1.3-beta.3 was built as run 39087424705 and voided before it was tagged or published, because WorkstationManager.exe embedded all brand logos. It is not pinned. mercedes-v0.1.3-beta.4 is pending and is not pinned yet. mercedes-v0.1.3-beta.1 and mercedes-v0.1.3-beta.2 stay unpinned. universal-v and bare v tags stay retired. The old BMW v1.0.1-beta.5 core package is not an approved master bundle.",
   "brands": [
     {
       "id": "mercedes",
@@ -25,19 +25,7 @@
         "entry": "WorkstationManager.exe",
         "note": "Single supervisor for every brand. This installer does not register Run or Winlogon startup."
       },
-      "releases": [
-        {
-          "tag": "mercedes-v0.1.3-beta.3",
-          "version": "0.1.3-beta.3",
-          "channel": "beta",
-          "sha256": "0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a",
-          "bytes": 1416210,
-          "manifestSha256": "fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528",
-          "manifestBytes": 3338,
-          "asset": "workstation.zip",
-          "manifestAsset": "update-manifest.json"
-        }
-      ]
+      "releases": []
     },
     {
       "id": "bmw",

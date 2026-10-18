@@ -74,9 +74,11 @@
       "fileCount": 20,
       "sourceCommit": "7b6befdfcb3d501a8b2f29b240adcb58df897fc5",
       "workflowRunId": "39087424705",
-      "historical": false,
+      "historical": true,
       "neverReMint": true,
-      "note": null
+      "voided": true,
+      "published": false,
+      "note": "Built from 7b6befdf as run 39087424705, never tagged or published. Voided because WorkstationManager.exe embedded all brand logos. Superseded by 0.1.3-beta.4."
     },
     {
       "brand": "bmw",

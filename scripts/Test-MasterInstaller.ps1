@@ -224,12 +224,12 @@ try {
   Assert-True ([string]$loadedCatalog.Catalog.signatureStatus -eq 'placeholder-untrusted') 'catalog signature status'
   $mercedesBrand = Get-CatalogBrand $loadedCatalog.Catalog 'mercedes'
   $bmwBrand = Get-CatalogBrand $loadedCatalog.Catalog 'bmw'
-  $mercedesPin = Select-ApprovedRelease $mercedesBrand 'mercedes' 'beta'
+  $mercedesReleases = @(Get-CatalogReleaseList $mercedesBrand)
+  Assert-True ($mercedesReleases.Count -eq 0) 'mercedes releases must stay empty until beta.4'
+  Assert-Throws { Select-ApprovedRelease $mercedesBrand 'mercedes' 'beta' } 'No approved mercedes release is pinned'
+  Assert-Throws { Select-ApprovedRelease ([pscustomobject]@{ releases = $null }) 'mercedes' 'beta' } 'No approved mercedes release is pinned'
+  Assert-Throws { Select-ApprovedRelease ([pscustomobject]@{ releases = @() }) 'mercedes' 'beta' } 'No approved mercedes release is pinned'
   $bmwPin = Select-ApprovedRelease $bmwBrand 'bmw' 'beta'
-  Assert-True ([string]$mercedesPin.tag -eq 'mercedes-v0.1.3-beta.3' -and [string]$mercedesPin.version -eq '0.1.3-beta.3' -and [string]$mercedesPin.channel -eq 'beta') 'mercedes pin identity'
-  Assert-True ([string]$mercedesPin.sha256 -eq '0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a' -and [int64]$mercedesPin.bytes -eq 1416210) 'mercedes zip pin'
-  Assert-True ([string]$mercedesPin.manifestSha256 -eq 'fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528' -and [int64]$mercedesPin.manifestBytes -eq 3338) 'mercedes manifest pin'
-  Assert-True ([string]$mercedesPin.asset -eq 'workstation.zip' -and [string]$mercedesPin.manifestAsset -eq 'update-manifest.json') 'mercedes asset names'
   Assert-True ([string]$bmwPin.tag -eq 'bmw-v1.0.2-beta.1' -and [string]$bmwPin.version -eq '1.0.2-beta.1' -and [string]$bmwPin.channel -eq 'beta') 'bmw pin identity'
   Assert-True ([string]$bmwPin.sha256 -eq '77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978' -and [int64]$bmwPin.bytes -eq 48955) 'bmw zip pin'
   Assert-True ([string]$bmwPin.manifestSha256 -eq '82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136' -and [int64]$bmwPin.manifestBytes -eq 2554) 'bmw manifest pin'
@@ -237,9 +237,12 @@ try {
   $pinnedTags = @(@($mercedesBrand.releases) + @($bmwBrand.releases) | ForEach-Object { [string]$_.tag })
   Assert-True ($pinnedTags -notcontains 'mercedes-v0.1.3-beta.1') 'beta.1 must stay unpinned'
   Assert-True ($pinnedTags -notcontains 'mercedes-v0.1.3-beta.2') 'beta.2 must stay unpinned'
+  Assert-True ($pinnedTags -notcontains 'mercedes-v0.1.3-beta.3') 'voided beta.3 must stay unpinned'
+  $unusedRoot = Join-Path $temp 'unused-root'
   Assert-Throws {
-    Install-ApprovedBrand -Brand 'mercedes' -AllowTestRoot -InstallRoot (Join-Path $temp 'unused-root') -InstallerData (Join-Path $temp 'unused-data') -LogDirectory (Join-Path $temp 'unused-logs') -RepoRoot $repo -AllowUncheckedProcesses -OfflineOnly
-  } 'No offline payload'
+    Install-ApprovedBrand -Brand 'mercedes' -AllowTestRoot -InstallRoot $unusedRoot -InstallerData (Join-Path $temp 'unused-data') -LogDirectory (Join-Path $temp 'unused-logs') -RepoRoot $repo -AllowUncheckedProcesses -OfflineOnly
+  } 'No approved mercedes release is pinned'
+  Assert-True (-not (Test-Path -LiteralPath $unusedRoot)) 'empty mercedes catalog created an install root'
 
   $launcher = [System.Text.Encoding]::UTF8.GetBytes("Write-Output 'approved-launcher'`r`n")
   $version = [System.Text.Encoding]::UTF8.GetBytes('{"version":"1.2.3-beta.1"}')
@@ -318,6 +321,11 @@ try {
   Write-Utf8NoBom $catalogFile (($catalogObject | ConvertTo-Json -Depth 8) + "`n")
   $fixturePin = Get-Sha256Hex $catalogFile
   Write-Utf8NoBom (Join-Path $fixture 'catalog/catalog.sha256') ($fixturePin + "  catalog.json`n")
+  $emptyBmwRoot = Join-Path $temp 'empty-bmw-root'
+  Assert-Throws {
+    Install-ApprovedBrand -Brand 'bmw' -AllowTestRoot -InstallRoot $emptyBmwRoot -InstallerData (Join-Path $temp 'empty-bmw-data') -LogDirectory (Join-Path $temp 'empty-bmw-logs') -RepoRoot $fixture -AllowUncheckedProcesses -OfflineOnly
+  } 'No approved bmw release is pinned'
+  Assert-True (-not (Test-Path -LiteralPath $emptyBmwRoot)) 'empty bmw catalog created an install root'
 
   $global:MasterTestCalls = New-Object System.Collections.Generic.List[object]
   $global:MasterStateReads = 0
@@ -878,7 +886,7 @@ try {
     [pscustomobject]@{ brand = 'mercedes'; version = '0.1.2-beta.1'; contentDigest = $null; zipSha256 = $null; zipBytes = $null; manifestSha256 = $null; manifestBytes = $null; fileCount = $null; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = 'hash not recorded' },
     [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.1'; contentDigest = $null; zipSha256 = '17a3a1d81d613db216e4a9b939ee7dccac0b8b1c7a19133fc4b02d0d911e5db2'; zipBytes = 1507918; manifestSha256 = 'fc1a063d9a78eef292a78e99e9c292f53c209927d7e734a2b49355739a33250f'; manifestBytes = 4562; fileCount = 28; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
     [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.2'; contentDigest = $null; zipSha256 = 'be8fbfe5164ae8e511965d23f163644fb0166b6c7febffbc041d15e4a261d773'; zipBytes = 1509019; manifestSha256 = '60c975f309428d7569058357f610afa323cb5c50400bc3a5115f6a548f529b82'; manifestBytes = 4562; fileCount = 28; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.3'; contentDigest = 'af87858cc58bf0f66cd379ff88cdb07f9508b1e6490275a02cea9d483e58af67'; zipSha256 = '0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a'; zipBytes = 1416210; manifestSha256 = 'fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528'; manifestBytes = 3338; fileCount = 20; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087424705'; historical = $false; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.3'; contentDigest = 'af87858cc58bf0f66cd379ff88cdb07f9508b1e6490275a02cea9d483e58af67'; zipSha256 = '0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a'; zipBytes = 1416210; manifestSha256 = 'fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528'; manifestBytes = 3338; fileCount = 20; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087424705'; historical = $true; neverReMint = $true; voided = $true; published = $false; note = 'Built from 7b6befdf as run 39087424705, never tagged or published. Voided because WorkstationManager.exe embedded all brand logos. Superseded by 0.1.3-beta.4.' },
     [pscustomobject]@{ brand = 'bmw'; version = '1.0.2-beta.1'; contentDigest = 'e07829490aff1f4de7ae919fb9d2cd86f4ddc64ed684c5d1e14d1537753b5cd9'; zipSha256 = '77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978'; zipBytes = 48955; manifestSha256 = '82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136'; manifestBytes = 2554; fileCount = 15; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087426283'; historical = $false; neverReMint = $true; note = $null },
     [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.1'; contentDigest = $null; zipSha256 = 'ba9ee12f23a9043196788d4fc7778971f86bc360dcee0a2e26cb20dc687d0eea'; zipBytes = 14323; manifestSha256 = '9cc8b683feed58593744b270824bb524ba823a423a2e50da7acacf4c1ef240de'; manifestBytes = 185; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
     [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.2'; contentDigest = $null; zipSha256 = 'd9ed100f4da72dfce1669ae5471134d3f24d59ee0854daf11209cd434892d2b2'; zipBytes = 14468; manifestSha256 = '720516f77ca3d6725f5296471b12c506558eb89910c4c8e1ad16ef5ff16d7379'; manifestBytes = 185; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
@@ -887,7 +895,7 @@ try {
   )
   $lockEntries = @($lock.entries)
   Assert-VersionsLockPrefix $lockEntries $lockExpected
-  Assert-True ($lockEntries[4].zipSha256 -ceq [string]$mercedesPin.sha256 -and $lockEntries[4].manifestSha256 -ceq [string]$mercedesPin.manifestSha256 -and [int64]$lockEntries[4].zipBytes -ceq [int64]$mercedesPin.bytes -and [int64]$lockEntries[4].manifestBytes -ceq [int64]$mercedesPin.manifestBytes) 'mercedes lock does not match the catalog pin'
+  Assert-True ($lockEntries[4].voided -ceq $true -and $lockEntries[4].published -ceq $false -and $lockEntries[4].historical -ceq $true) 'mercedes beta.3 lock row is not voided'
   Assert-True ($lockEntries[5].zipSha256 -ceq [string]$bmwPin.sha256 -and $lockEntries[5].manifestSha256 -ceq [string]$bmwPin.manifestSha256 -and [int64]$lockEntries[5].zipBytes -ceq [int64]$bmwPin.bytes -and [int64]$lockEntries[5].manifestBytes -ceq [int64]$bmwPin.manifestBytes) 'bmw lock does not match the catalog pin'
 
   Write-Output 'Master installer checks passed.'

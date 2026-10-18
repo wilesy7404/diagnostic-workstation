@@ -104,7 +104,7 @@ function Read-BrandReleaseFile {
   $retired = @($release.retiredTagPrefixes)
   if ($retired -notcontains 'universal-v') { throw 'brand release metadata must retire universal-v. Nothing was installed.' }
   if ($CatalogBrand -and -not [string]::IsNullOrWhiteSpace([string]$release.packageSha256)) {
-    $pins = @($CatalogBrand.releases | ForEach-Object { [string]$_.sha256 })
+    $pins = @(Get-CatalogReleaseList $CatalogBrand | ForEach-Object { [string]$_.sha256 })
     if ($pins -notcontains [string]$release.packageSha256) {
       throw 'brand release packageSha256 is not pinned in the catalog. Nothing was installed.'
     }
@@ -112,12 +112,18 @@ function Read-BrandReleaseFile {
   return $release
 }
 
+function Get-CatalogReleaseList($CatalogBrand) {
+  foreach ($release in @($CatalogBrand.releases)) {
+    if ($null -eq $release) { continue }
+    Write-Output $release -NoEnumerate
+  }
+}
+
 function Select-ApprovedRelease {
   param($CatalogBrand, [Parameter(Mandatory = $true)][string]$Brand, [string]$Channel, [string]$Tag)
   if ([string]::IsNullOrWhiteSpace($Channel)) { $Channel = 'beta' }
   $chosen = @()
-  foreach ($release in @($CatalogBrand.releases)) {
-    if (-not $release) { continue }
+  foreach ($release in @(Get-CatalogReleaseList $CatalogBrand)) {
     $releaseTag = [string]$release.tag
     Assert-BrandTag $Brand $releaseTag
     if ($Tag -and $releaseTag -ne $Tag) { continue }

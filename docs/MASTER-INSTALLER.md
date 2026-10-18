@@ -16,7 +16,7 @@ The same rule is used for `update-manifest.json`. The ZIP is checked for size an
 
 If the download fails, the installer looks in `-Source <folder>` and in `offline/<tag>/` for the same two files and checks the same pins. `-OfflineOnly` skips the network. An expired catalog still installs and records `Catalog dated ...; newer versions may exist`.
 
-`catalog/catalog.json` pins `mercedes-v0.1.3-beta.3` and `bmw-v1.0.2-beta.1` (channel beta). Those builds are not published: no tag and no GitHub release yet, and the repository has no `offline/<tag>/` copy. An install therefore stops with `No offline payload was found` until the release assets exist. `mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` stay unpinned. A brand with an empty release list still stops with `No approved <brand> release is pinned` and writes nothing.
+`catalog/catalog.json` pins `bmw-v1.0.2-beta.1` (channel beta). That build is not published: no tag and no GitHub release yet, and the repository has no `offline/<tag>/` copy. A BMW install therefore stops with `No offline payload was found` until the release assets exist. Mercedes has no pinned release. `mercedes-v0.1.3-beta.3` was voided and is not pinned, and `mercedes-v0.1.3-beta.4` is pending. A Mercedes install stops with `No approved mercedes release is pinned` and does not create the brand folder. `mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` stay unpinned. A brand with an empty release list stops with `No approved <brand> release is pinned`.
 
 `keys/qa.pub` and `keys/release.pub` are placeholders. The catalog pin is a checksum of the catalog file, not an Ed25519 signature. A catalog that claims `release-signed` is rejected. Real key custody is a later step.
 

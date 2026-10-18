@@ -1,8 +1,8 @@
 # Changelog
 
-These builds are not published. There is no tag and no GitHub release yet. The catalog pin records the Actions artifact bytes so a later release can upload the same files.
+BMW `1.0.2-beta.1` is pinned and not published. There is no tag and no GitHub release yet. Mercedes `0.1.3-beta.3` was built and then voided. It was never tagged or published, and it is not pinned. Mercedes `0.1.3-beta.4` is pending.
 
-## Mercedes-Benz 0.1.3-beta.3 (prerelease, beta) — 2026-10-17
+## Mercedes-Benz 0.1.3-beta.3 (built, voided, never published) — 2026-10-17
 
 Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, #11, and #12.
 
@@ -10,13 +10,13 @@ Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, 
 
 Changes since the prior Mercedes label `mercedes-v0.1.3-beta.2`:
 
-- The bundle ships only its own logo, `branding/mercedes.png`.
+- Voided, never published: `WorkstationManager.exe` embedded all brand logos. `0.1.3-beta.4` is pending and is not pinned. The zip's only logo file is `branding/mercedes.png`.
 - `apps.json` is removed from the bundle and kept on the machine.
 - `WorkstationManager.exe` is the supervisor.
 - An existing `profile.json` is kept. A fresh install receives the bundle default.
 - Non-ASCII `.ps1` files that had no UTF-8 BOM get that BOM during packaging.
 
-`mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` are existing published prereleases with different bytes. They are left untouched and unpinned. `0.1.3-beta.3` is a fresh label, not a reused one.
+`mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` are existing published prereleases with different bytes. They stay unpinned. `0.1.3-beta.3` was built from commit `7b6befdf` as workflow run 39087424705 and voided because `WorkstationManager.exe` embedded all brand logos. It was never tagged or published. `0.1.3-beta.4` is pending.
 
 Known issues: no VM test yet. DPI, multi-monitor, and Windows PowerShell 5.1 are not yet verified.
 
