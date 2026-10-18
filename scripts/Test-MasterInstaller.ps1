@@ -65,7 +65,12 @@ try {
     $found = @($plan.Policies | Where-Object { $_.Name -eq $name })
     Assert-True ($found.Count -eq 1) "policy $name is missing from the Defender plan"
   }
-  Assert-True (($plan.Services -join ',') -eq 'WinDefend,WdNisSvc,MDCoreSvc') 'Defender service list changed'
+  Assert-True (($plan.Services -join ',') -eq 'WinDefend,WdNisSvc,MDCoreSvc') 'observed Defender service list changed'
+  Assert-True (-not ($blob.Contains('Set-Service'))) 'installer still changes a Defender service'
+  Assert-True (-not ($blob.Contains('Stop-Service'))) 'installer still stops a Defender service'
+  Assert-True (-not ($blob.Contains('Start-Service'))) 'installer still starts a Defender service'
+  Assert-True (-not ($blob.Contains('TrustedInstaller'))) 'TrustedInstaller fallback is still present'
+  Assert-True (-not ($blob.Contains('CreateProcessWithTokenW'))) 'TrustedInstaller process launch is still present'
   $entry = [System.IO.File]::ReadAllText((Join-Path $repo 'installer/Master/Install-Master.ps1'))
   Assert-True ($entry.Contains('-ApplySecurity:(-not $VerifyOnly)')) 'entry does not apply security after install'
   Assert-True (-not ($entry.Contains('dControl.exe'))) 'entry names dControl.exe'
@@ -367,13 +372,8 @@ try {
   Assert-True ($spyware.Count -eq 1 -and [int]$spyware[0].value -eq 1) 'DisableAntiSpyware was not set'
   $onAccess = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableOnAccessProtection' })
   Assert-True ($onAccess.Count -eq 1 -and [int]$onAccess[0].value -eq 1) 'on-access policy was not set'
-  $disableNames = @($global:MasterDefenderCommands | ForEach-Object { '{0}:{1}' -f $_.kind, $_.name })
-  $nisAt = [array]::IndexOf($disableNames, 'Set-Service:WdNisSvc')
-  $winAt = [array]::IndexOf($disableNames, 'Set-Service:WinDefend')
-  Assert-True ($nisAt -ge 0 -and $winAt -gt $nisAt) 'WinDefend was not stopped after WdNisSvc'
-  $winDisable = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WinDefend' })
-  Assert-True ($winDisable.Count -eq 1 -and $winDisable[0].startupType -eq 'Disabled' -and $winDisable[0].status -eq 'Stopped') 'WinDefend was not disabled'
-  Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.name -eq 'MDCoreSvc' }).Count -eq 0) 'absent MDCoreSvc was changed'
+  Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.kind -ne 'Set-MpPreference' -and $_.kind -ne 'Set-Policy' }).Count -eq 0) 'disable changed something other than preferences and policy'
+  Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.name -eq 'WinDefend' -or $_.name -eq 'WdNisSvc' -or $_.name -eq 'MDCoreSvc' }).Count -eq 0) 'disable issued a Defender service command'
   $shortcuts = Read-JsonFile (Join-Path $data 'shortcuts-mercedes.json')
   $shortcutBlob = $shortcuts | ConvertTo-Json -Depth 6
   Assert-True ($shortcutBlob.Contains('Re-enable Windows Update and Defender')) 're-enable shortcut missing'
@@ -396,14 +396,8 @@ try {
   Assert-True ($maps.Count -eq 1 -and [string]$maps[0].value -eq '2') 'uncaptured MAPSReporting did not return to the default'
   $removedSpyware = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' })
   Assert-True ($removedSpyware.Count -eq 1) 'DisableAntiSpyware policy was not removed'
-  $enableNames = @($global:MasterDefenderCommands | ForEach-Object { '{0}:{1}' -f $_.kind, $_.name })
-  $enableWin = [array]::IndexOf($enableNames, 'Set-Service:WinDefend')
-  $enableNis = [array]::IndexOf($enableNames, 'Set-Service:WdNisSvc')
-  Assert-True ($enableWin -ge 0 -and $enableNis -gt $enableWin) 'WinDefend was not restored before WdNisSvc'
-  $winEnable = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WinDefend' })
-  Assert-True ($winEnable[0].startupType -eq 'Automatic' -and $winEnable[0].status -eq 'Running') 'WinDefend was not restored'
-  $nisEnable = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WdNisSvc' })
-  Assert-True ($nisEnable[0].startupType -eq 'Automatic' -and $nisEnable[0].status -eq 'Running') 'WdNisSvc start mode was not mapped'
+  Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.kind -ne 'Set-MpPreference' -and $_.kind -ne 'Remove-Policy' -and $_.kind -ne 'Set-Policy' }).Count -eq 0) 're-enable changed something other than preferences and policy'
+  Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.name -eq 'WinDefend' -or $_.name -eq 'WdNisSvc' -or $_.name -eq 'MDCoreSvc' }).Count -eq 0) 're-enable issued a Defender service command'
   $enableCalls = @($global:MasterTestCalls | Where-Object { $_.arguments -eq '/E' -and $_.exe -match 'Wub_x64.exe' })
   Assert-True ($enableCalls.Count -eq 1) 'Wub /E was not the undo command'
   $global:MasterTestCalls.Clear()
@@ -615,8 +609,7 @@ try {
   Assert-True ([string]$defaultRealtime[0].value -eq 'False') 'missing snapshot did not restore realtime monitoring'
   $defaultMaps = @($defaultCommands | Where-Object { $_.name -eq 'MAPSReporting' })
   Assert-True ([string]$defaultMaps[0].value -eq '2') 'missing snapshot did not restore MAPSReporting'
-  $defaultWin = @($defaultCommands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WinDefend' })
-  Assert-True ($defaultWin[0].startupType -eq 'Automatic' -and $defaultWin[0].status -eq 'Running') 'missing snapshot did not restore WinDefend'
+  Assert-True (@($defaultCommands | Where-Object { $_.name -eq 'WinDefend' -or $_.kind -eq 'Set-Service' }).Count -eq 0) 'missing snapshot tried to change WinDefend'
   $rollback = New-Object System.Collections.Generic.List[object]
   $failed = Invoke-DefenderControl -Action 'disable' -LogDirectory $defenderLogs -SnapshotPath (Join-Path $temp 'defender-fail.json') -ReadState {
     return (New-TestDefenderState 'off')
@@ -631,10 +624,7 @@ try {
   Assert-True ((Get-DefenderCommandScope 'Set-Policy') -eq 'admin') 'policy writes left the admin process'
   Assert-True ((Get-DefenderCommandScope 'Remove-Policy') -eq 'admin') 'policy removal left the admin process'
   Assert-True ((Get-DefenderCommandScope 'Set-MpPreference') -eq 'system') 'Set-MpPreference stayed in the admin process'
-  Assert-True ((Get-DefenderCommandScope 'Set-Service') -eq 'system') 'service changes stayed in the admin process'
-  Assert-True (Test-DefenderAccessDenied 'Access is denied') 'access denied was not recognized'
-  Assert-True (Test-DefenderAccessDenied '0x80070005') '0x80070005 was not recognized'
-  Assert-True (-not (Test-DefenderAccessDenied 'Tamper Protection is enabled')) 'tamper text was treated as access denied'
+  Assert-Throws { Get-DefenderCommandScope 'Set-Service' } 'Unsupported defender command'
   Assert-Throws {
     Register-DefenderSystemTask ([pscustomobject]@{ taskName = 'DiagnosticWorkstation-Defender-test'; userId = 'SYSTEM'; runLevel = 'Highest'; execute = 'powershell.exe'; argumentLine = '-NoProfile'; workingDirectory = $temp })
   } 'forbidden'
@@ -655,14 +645,12 @@ try {
   Assert-True ($systemDisabled.status -eq 'disabled') 'SYSTEM Defender disable did not report disabled'
   $systemRegisters = @($systemHost | Where-Object { $_.phase -eq 'register' })
   $systemDeletes = @($systemHost | Where-Object { $_.phase -eq 'delete' })
-  Assert-True ($systemRegisters.Count -eq 2) 'disable did not split preferences and services into two SYSTEM batches'
+  Assert-True ($systemRegisters.Count -eq 1) 'disable did not use one SYSTEM batch for Set-MpPreference'
   Assert-True ($systemDeletes.Count -eq $systemRegisters.Count) 'a SYSTEM task was left registered'
   $preferenceBatch = @($systemRegisters[0].spec.commands)
-  $serviceBatch = @($systemRegisters[1].spec.commands)
-  Assert-True ($preferenceBatch.Count -gt 0 -and @($preferenceBatch | Where-Object { $_.kind -ne 'Set-MpPreference' }).Count -eq 0) 'the first SYSTEM batch was not only Set-MpPreference'
-  Assert-True ($serviceBatch.Count -gt 0 -and @($serviceBatch | Where-Object { $_.kind -ne 'Set-Service' }).Count -eq 0) 'the second SYSTEM batch was not only Set-Service'
+  Assert-True ($preferenceBatch.Count -gt 0 -and @($preferenceBatch | Where-Object { $_.kind -ne 'Set-MpPreference' }).Count -eq 0) 'the SYSTEM batch was not only Set-MpPreference'
   Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 1) 'DisableAntiSpyware was not written in the admin process'
-  Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-Service' -or $_.kind -eq 'Set-MpPreference' }).Count -eq 0) 'a SYSTEM command ran in the admin sink'
+  Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-MpPreference' }).Count -eq 0) 'a SYSTEM command ran in the admin sink'
   Assert-True ($systemRegisters[0].spec.taskName.StartsWith('DiagnosticWorkstation-Defender-')) 'task name is not transient'
   Assert-True ($systemRegisters[0].spec.userId -eq 'SYSTEM') 'task principal is not SYSTEM'
   Assert-True ($systemRegisters[0].spec.runLevel -eq 'Highest') 'task run level is not highest'
@@ -684,9 +672,10 @@ try {
   Assert-True ($systemEnabled.status -eq 'enabled') 'SYSTEM Defender re-enable did not report enabled'
   $enableRegisters = @($enableHost | Where-Object { $_.phase -eq 'register' })
   $enableDeletes = @($enableHost | Where-Object { $_.phase -eq 'delete' })
-  Assert-True ($enableRegisters.Count -eq 2) 're-enable did not use SYSTEM for preferences and services'
+  Assert-True ($enableRegisters.Count -eq 1) 're-enable did not use one SYSTEM batch for Set-MpPreference'
   Assert-True ($enableDeletes.Count -eq $enableRegisters.Count) 're-enable left a SYSTEM task registered'
-  Assert-True (@($enableRegisters[1].spec.commands | Where-Object { $_.kind -eq 'Set-Service' -and $_.name -eq 'WinDefend' }).Count -eq 1) 're-enable did not restore WinDefend as SYSTEM'
+  Assert-True (@($enableRegisters[0].spec.commands | Where-Object { $_.kind -ne 'Set-MpPreference' }).Count -eq 0) 're-enable sent a non-preference command to SYSTEM'
+  Assert-True (@($enableRegisters[0].spec.commands | Where-Object { $_.name -eq 'DisableRealtimeMonitoring' }).Count -eq 1) 're-enable did not restore realtime monitoring as SYSTEM'
   Assert-True (@($enableAdmin | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 1) 're-enable did not remove policy in the admin process'
 
   $deniedLogs = Join-Path $temp 'defender-denied-logs'
@@ -705,59 +694,11 @@ try {
   Assert-True ($deniedRegisters.Count -ge 2) 'access denied did not roll back through the SYSTEM task'
   Assert-True ($deniedDeletes.Count -eq $deniedRegisters.Count) 'access denied left a SYSTEM task registered'
   Assert-True (@($deniedRegisters | Where-Object { @($_.spec.commands | Where-Object { $_.kind -eq 'Set-MpPreference' }).Count -gt 0 }).Count -ge 2) 'rollback did not send Set-MpPreference to SYSTEM'
-
-  $fallbackCalls = New-Object System.Collections.Generic.List[string]
-  $fallbackSeen = New-Object System.Collections.Generic.List[string]
-  $fallbackCommands = @(
-    [pscustomobject]@{ kind = 'Set-MpPreference'; name = 'A' },
-    [pscustomobject]@{ kind = 'Set-MpPreference'; name = 'B' },
-    [pscustomobject]@{ kind = 'Set-Service'; name = 'WinDefend' }
-  )
-  $fallback = Invoke-DefenderCommandListWithFallback -Commands $fallbackCommands -Executor {
-    param($Command)
-    $fallbackCalls.Add([string]$Command.name) | Out-Null
-    if ($Command.name -eq 'B') { throw 'Access is denied' }
-  } -TrustedInstallerBatch {
-    param($Remaining)
-    foreach ($item in @($Remaining)) { $fallbackSeen.Add([string]$item.name) | Out-Null }
-    return [pscustomobject]@{ ok = $true; applied = @($Remaining); error = $null }
-  }
-  Assert-True ($fallback.ok -and $fallback.trustedInstaller) 'TrustedInstaller fallback did not take the denied remainder'
-  Assert-True (($fallbackCalls -join ',') -eq 'A,B') 'commands after access denied still ran as SYSTEM'
-  Assert-True (($fallbackSeen -join ',') -eq 'B,WinDefend') 'TrustedInstaller did not receive the remaining commands'
-  $fallbackFailed = Invoke-DefenderCommandListWithFallback -Commands $fallbackCommands -Executor {
-    param($Command)
-    if ($Command.name -eq 'B') { throw 'Access is denied' }
-  } -TrustedInstallerBatch {
-    param($Remaining)
-    return [pscustomobject]@{ ok = $false; error = 'CreateProcessWithTokenW failed 5'; applied = @() }
-  }
-  Assert-True ((-not $fallbackFailed.ok) -and $fallbackFailed.trustedInstaller) 'a failed TrustedInstaller fallback reported success'
-  Assert-True ($fallbackFailed.error.Contains('CreateProcessWithTokenW')) 'TrustedInstaller failure detail was dropped'
-  $fallbackUnused = @{ n = 0 }
-  $fallbackOk = Invoke-DefenderCommandListWithFallback -Commands @([pscustomobject]@{ kind = 'Set-Service'; name = 'WinDefend' }) -Executor {
-    param($Command)
-  } -TrustedInstallerBatch {
-    param($Remaining)
-    $fallbackUnused.n++
-    return [pscustomobject]@{ ok = $true; applied = @($Remaining) }
-  }
-  Assert-True ($fallbackOk.ok -and -not $fallbackOk.trustedInstaller -and $fallbackUnused.n -eq 0) 'TrustedInstaller ran when SYSTEM succeeded'
   $copyRoot = Join-Path $temp 'copy-master'
   Copy-MasterCommands $repo $copyRoot
   $copiedJob = Join-Path -Path (Join-Path -Path (Join-Path -Path $copyRoot -ChildPath 'Master') -ChildPath 'lib') -ChildPath 'Invoke-DefenderSystemJob.ps1'
   Assert-True (Test-Path -LiteralPath $copiedJob) 'the SYSTEM job script was not copied for re-enable'
-  $jobText = [System.IO.File]::ReadAllText((Join-Path $lib 'Invoke-DefenderSystemJob.ps1'))
-  $sourceMatch = [regex]::Match($jobText, "(?s)TrustedInstallerSource = @'\r?\n(.*)\r?\n'@")
-  Assert-True ($sourceMatch.Success) 'TrustedInstaller source is missing from the job'
-  try {
-    Add-Type -TypeDefinition $sourceMatch.Groups[1].Value -Language CSharp -ErrorAction Stop
-  } catch {
-    if ($_.Exception.Message -match 'already exists') { }
-    elseif ($_.Exception.Message -match 'compiler|csc|CodeDom|Roslyn') { throw "TrustedInstaller source could not be compiled: $($_.Exception.Message)" }
-    else { throw }
-  }
-  Assert-True ($null -ne ('DefenderTrustedInstallerProcess' -as [type])) 'TrustedInstaller helper did not compile'
+  Assert-True (([System.IO.File]::ReadAllText($copiedJob)).Contains('Set-MpPreference')) 'the SYSTEM job does not apply preferences'
 
   $signed = Join-Path $temp 'signed-repo'
   New-Item -ItemType Directory -Force -Path (Join-Path $signed 'catalog'), (Join-Path $signed 'keys') | Out-Null

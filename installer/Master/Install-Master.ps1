@@ -1,7 +1,7 @@
 # Install one approved brand bundle, then disable Windows Update and Windows Defender.
-# Defender uses documented Set-MpPreference, policy, and service changes.
+# Defender success is Set-MpPreference plus policy DWORDs. Protected Defender services are left running.
 # Elevation relaunches this script at most once. The brand-root install lock stops WorkstationManager from opening another PowerShell.
-# Defender policy writes stay in this process. Set-MpPreference and service changes run as SYSTEM in a transient task that is deleted before this script exits.
+# Policy writes stay in this process. Set-MpPreference runs as SYSTEM in a transient task that is deleted before this script exits.
 # This script does not change Winlogon, the shell, or Run startup.
 # Windows PowerShell 5.1. Run it on a throwaway Windows VM, not on a live shop PC.
 [CmdletBinding()]

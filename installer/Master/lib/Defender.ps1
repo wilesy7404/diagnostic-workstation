@@ -1,7 +1,7 @@
 # Native Windows Defender control for the master installer.
-# Uses documented Set-MpPreference settings, Defender policy values, and the WinDefend service family.
-# Policy registry writes stay in the elevated admin process. Set-MpPreference and service start/stop
-# run as SYSTEM through a transient scheduled task, with one TrustedInstaller retry if SYSTEM is denied.
+# Disable is Set-MpPreference plus the Defender policy DWORDs. That is success.
+# Set-MpPreference runs as SYSTEM through a transient scheduled task. Policy writes stay in the elevated admin process.
+# WinDefend, WdNisSvc, and MDCoreSvc are PPL-protected and are left running. Their state is only recorded.
 # The task is created, started, and deleted in the same step. It has no trigger and does not change Winlogon.
 # Tamper Protection is detected first. The user is prompted only when it is on and blocking.
 
@@ -36,6 +36,7 @@ function Get-DefenderControlPlan {
   return [pscustomobject]@{
     Preferences = $preference
     Policies = $policy
+    # Observed for the pre/post log only. These services are not stopped or reconfigured.
     Services = @('WinDefend', 'WdNisSvc', 'MDCoreSvc')
   }
 }
@@ -71,9 +72,9 @@ function New-DefenderDefaultEnableSnapshot($LiveState) {
     if (-not [bool]$observed.present) { continue }
     $services += [pscustomobject]@{
       name = $name
-      present = $true
-      status = 'Running'
-      startMode = 'Automatic'
+      present = [bool]$observed.present
+      status = [string]$observed.status
+      startMode = [string]$observed.startMode
     }
   }
   return [pscustomobject]@{
@@ -186,16 +187,6 @@ function New-DefenderSnapshot($State) {
   }
 }
 
-function Get-DefenderServiceStartup([string]$StartMode, [string]$Fallback) {
-  switch ($StartMode) {
-    'Auto' { return 'Automatic' }
-    'Automatic' { return 'Automatic' }
-    'Manual' { return 'Manual' }
-    'Disabled' { return 'Disabled' }
-    default { return $Fallback }
-  }
-}
-
 function Get-DefenderDisableCommands($State) {
   $plan = Get-DefenderControlPlan
   $commands = @()
@@ -204,13 +195,6 @@ function Get-DefenderDisableCommands($State) {
   }
   foreach ($item in @($plan.Policies)) {
     $commands += [pscustomobject]@{ kind = 'Set-Policy'; path = $item.Path; name = $item.Name; value = 1 }
-  }
-  $names = @($plan.Services)
-  for ($index = $names.Count - 1; $index -ge 0; $index--) {
-    $name = [string]$names[$index]
-    $observed = Get-DefenderServiceObserved $State $name
-    if (-not [bool]$observed.present) { continue }
-    $commands += [pscustomobject]@{ kind = 'Set-Service'; name = $name; startupType = 'Disabled'; status = 'Stopped' }
   }
   return $commands
 }
@@ -232,17 +216,6 @@ function Get-DefenderEnableCommands($Snapshot) {
       $commands += [pscustomobject]@{ kind = 'Remove-Policy'; path = $item.Path; name = $item.Name }
     }
   }
-  foreach ($name in @($plan.Services)) {
-    $observed = Get-DefenderServiceObserved $Snapshot $name
-    if (-not [bool]$observed.present) { continue }
-    $running = ([string]$observed.status -eq 'Running')
-    $commands += [pscustomobject]@{
-      kind = 'Set-Service'
-      name = $name
-      startupType = (Get-DefenderServiceStartup ([string]$observed.startMode) 'Automatic')
-      status = $(if ($running) { 'Running' } else { 'Stopped' })
-    }
-  }
   return $commands
 }
 
@@ -250,62 +223,16 @@ function Test-DefenderTamperError([string]$Message) {
   return $Message -match '(?i)tamper protection|tamperprotection|not allowed because tamper'
 }
 
-function Test-DefenderAccessDenied([string]$Message) {
-  return $Message -match '(?i)access is denied|access denied|0x80070005'
-}
-
 function Get-DefenderCommandScope([string]$Kind) {
   if ($Kind -eq 'Set-Policy' -or $Kind -eq 'Remove-Policy') { return 'admin' }
-  return 'system'
-}
-
-# Runs commands in order. An access-denied failure retries the remainder once through the
-# TrustedInstaller delegate. Policy writes stay with the caller; this is used for the SYSTEM job.
-function Invoke-DefenderCommandListWithFallback {
-  param($Commands, [scriptblock]$Executor, [scriptblock]$TrustedInstallerBatch)
-  $applied = @()
-  $list = @($Commands | Where-Object { $_ })
-  $index = 0
-  while ($index -lt $list.Count) {
-    $command = $list[$index]
-    try {
-      & $Executor $command
-      $applied += $command
-      $index++
-    } catch {
-      $message = $_.Exception.Message
-      if ($TrustedInstallerBatch -and (Test-DefenderAccessDenied $message)) {
-        $rest = @()
-        for ($cursor = $index; $cursor -lt $list.Count; $cursor++) { $rest += $list[$cursor] }
-        $fallback = & $TrustedInstallerBatch $rest
-        if (-not $fallback -or -not [bool]$fallback.ok) {
-          $detail = $message
-          if ($fallback -and $fallback.error) { $detail = [string]$fallback.error }
-          return [pscustomobject]@{ ok = $false; error = $detail; applied = @($applied); failed = $command; trustedInstaller = $true }
-        }
-        $merged = @($applied)
-        foreach ($item in @($fallback.applied)) { if ($item) { $merged += $item } }
-        return [pscustomobject]@{ ok = $true; error = $null; applied = $merged; failed = $null; trustedInstaller = $true }
-      }
-      return [pscustomobject]@{ ok = $false; error = $message; applied = @($applied); failed = $command; trustedInstaller = $false }
-    }
-  }
-  return [pscustomobject]@{ ok = $true; error = $null; applied = @($applied); failed = $null; trustedInstaller = $false }
-}
-
-function Test-DefenderTrustedInstallerIdentity {
-  if (-not (Test-MasterHostWindows)) { return $false }
-  try {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    return ([string]$identity.Name) -match '(?i)TrustedInstaller'
-  } catch { return $false }
+  if ($Kind -eq 'Set-MpPreference') { return 'system' }
+  throw "Unsupported defender command $Kind"
 }
 
 function Invoke-DefenderLiveCommand($Command) {
   if ($env:MASTER_INSTALLER_FORBID_TOOL_EXECUTION -eq '1') { throw 'defender changes are forbidden in this session' }
   if (-not (Test-MasterHostWindows)) { throw 'defender changes run on Windows only' }
-  $elevated = (Test-IsWindowsAdmin) -or (Test-DefenderTrustedInstallerIdentity)
-  if (-not $elevated) { throw 'defender changes require an elevated session' }
+  if (-not (Test-IsWindowsAdmin)) { throw 'defender changes require an elevated session' }
   switch ([string]$Command.kind) {
     'Set-MpPreference' {
       $parameters = @{}
@@ -321,16 +248,6 @@ function Invoke-DefenderLiveCommand($Command) {
     'Remove-Policy' {
       if (Test-Path -LiteralPath ([string]$Command.path)) {
         Remove-ItemProperty -Path ([string]$Command.path) -Name ([string]$Command.name) -ErrorAction SilentlyContinue
-      }
-    }
-    'Set-Service' {
-      $startup = [string]$Command.startupType
-      if ($startup -ne 'Automatic' -and $startup -ne 'Manual' -and $startup -ne 'Disabled') { $startup = 'Automatic' }
-      Set-Service -Name ([string]$Command.name) -StartupType $startup -ErrorAction Stop
-      if ([string]$Command.status -eq 'Stopped') {
-        Stop-Service -Name ([string]$Command.name) -Force -ErrorAction Stop
-      } elseif ([string]$Command.status -eq 'Running') {
-        Start-Service -Name ([string]$Command.name) -ErrorAction Stop
       }
     }
     default { throw "Unknown defender command $($Command.kind)" }
@@ -386,13 +303,12 @@ function Wait-DefenderSystemTaskResult($Spec) {
           ok = [bool]$data.ok
           error = $data.error
           applied = @($data.applied)
-          trustedInstaller = [bool]$data.trustedInstaller
         }
       } catch { }
     }
     Start-Sleep -Milliseconds 200
   }
-  return [pscustomobject]@{ ok = $false; error = 'defender system task timed out'; applied = @(); trustedInstaller = $false }
+  return [pscustomobject]@{ ok = $false; error = 'defender system task timed out'; applied = @() }
 }
 
 function Invoke-DefenderSystemBatch {
@@ -430,7 +346,6 @@ function Invoke-DefenderSystemBatch {
   $deleted = $false
   $taskOk = $false
   $taskError = $null
-  $trustedInstaller = $false
   try {
     if ($TaskHost) { $null = & $TaskHost 'register' $spec }
     else { Register-DefenderSystemTask $spec }
@@ -440,7 +355,6 @@ function Invoke-DefenderSystemBatch {
     if ($TaskHost) { $wait = & $TaskHost 'wait' $spec }
     else { $wait = Wait-DefenderSystemTaskResult $spec }
     $taskOk = [bool]($wait -and $wait.ok)
-    if ($wait) { $trustedInstaller = [bool]$wait.trustedInstaller }
     if (-not $taskOk) {
       $taskError = 'defender system task failed'
       if ($wait -and $wait.error) { $taskError = [string]$wait.error }
@@ -473,7 +387,6 @@ function Invoke-DefenderSystemBatch {
           deleted = $deleted
           transient = $true
           ok = $taskOk
-          trustedInstaller = $trustedInstaller
           error = $taskError
         })
       } catch { }
@@ -489,8 +402,8 @@ function Invoke-DefenderScopedBatch {
   return Invoke-DefenderSystemBatch -Commands $items -TaskHost $TaskHost -LogDirectory $LogDirectory
 }
 
-# Policy writes run in this process. Set-MpPreference and Set-Service run as SYSTEM.
-# Consecutive commands of the same scope stay in one batch so disable order is preserved.
+# Policy writes run in this process. Set-MpPreference runs as SYSTEM.
+# Consecutive commands of the same scope stay in one batch.
 function Invoke-DefenderPlannedCommands {
   param($Commands, [scriptblock]$CommandSink, [scriptblock]$TaskHost, [string]$LogDirectory)
   if ($CommandSink -and -not $TaskHost) { return Invoke-DefenderCommands $Commands $CommandSink }

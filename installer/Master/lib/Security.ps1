@@ -6,7 +6,7 @@
 # Windows binaries, so a throwaway Windows VM still has to confirm `Wub_x64.exe /?`
 # before this is merged. Windows Feature Updates can reset WUB; re-apply /D /P afterward.
 #
-# Defender is changed by installer/Master/lib/Defender.ps1 (Set-MpPreference, policy, WinDefend).
+# Defender is changed by installer/Master/lib/Defender.ps1 (Set-MpPreference and policy DWORDs). Protected services stay running.
 # The old Defender Control binary is not shipped and is not started.
 
 if (-not (Get-Command -Name Invoke-DefenderControl -ErrorAction SilentlyContinue)) {
