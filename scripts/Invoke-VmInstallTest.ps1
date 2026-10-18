@@ -354,6 +354,9 @@ function Add-WrongTargetCheck([string]$BrandId, [string]$TagName, [string]$Sourc
   $markerText = '{"schema":"diagnostic-workstation.installed-bundle/v1","brand":"' + $foreign + '","tag":"foreign","version":"0.0.0"}' + "`n"
   [System.IO.File]::WriteAllText($markerPath, $markerText)
   [System.IO.File]::WriteAllText((Join-Path $Root 'Launcher.ps1'), "Write-Output 'foreign-live'`n")
+  $lockPath = Join-Path $Root 'install-in-progress.lock'
+  [System.IO.File]::WriteAllText($lockPath, "other-run lock`n")
+  $beforeLock = Get-HexSha256 $lockPath
   $beforeTree = Get-TreeFingerprint $Root
   $beforeResidue = Get-InstallResidue $Root
   $beforeSibling = Get-SiblingBrandFingerprint $BrandId
@@ -366,12 +369,14 @@ function Add-WrongTargetCheck([string]$BrandId, [string]$TagName, [string]$Sourc
   if (Test-Path -LiteralPath $markerPath) {
     $stillForeign = [string](Read-JsonFile $markerPath).brand -eq $foreign
   }
-  $lockLeft = Test-Path -LiteralPath (Join-Path $Root 'install-in-progress.lock')
+  $lockSame = $false
+  if (Test-Path -LiteralPath $lockPath) { $lockSame = (Get-HexSha256 $lockPath) -ceq $beforeLock }
   $unchanged = ($beforeTree -ceq $afterTree) -and ($beforeResidue -ceq $afterResidue) -and ($beforeSibling -ceq $afterSibling)
-  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch 'belongs to' -or -not $stillForeign -or $lockLeft -or -not $unchanged) {
-    Add-Check $BrandId 'wrong-target' 'FAIL' ("foreign {0} marker exit {1} stillForeign={2} lockLeft={3} unchanged={4}. {5}" -f $foreign, $result.Code, $stillForeign, $lockLeft, $unchanged, $result.Text)
+  $noStaging = [string]::IsNullOrEmpty($afterResidue)
+  if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch 'belongs to' -or -not $stillForeign -or -not $lockSame -or -not $unchanged -or -not $noStaging) {
+    Add-Check $BrandId 'wrong-target' 'FAIL' ("foreign {0} marker exit {1} stillForeign={2} lockSame={3} unchanged={4} residue='{5}'. {6}" -f $foreign, $result.Code, $stillForeign, $lockSame, $unchanged, $afterResidue, $result.Text)
   } else {
-    Add-Check $BrandId 'wrong-target' 'PASS' ("install into a {0} folder was rejected with exit {1}. The foreign tree, its sibling brand folder, and install residue were unchanged, and no install-in-progress.lock was left" -f $foreign, $result.Code)
+    Add-Check $BrandId 'wrong-target' 'PASS' ("install into a {0} folder was rejected with exit {1}. The foreign tree and its pre-existing install-in-progress.lock stayed byte-identical, and no .staging-* leftover was present" -f $foreign, $result.Code)
   }
   Remove-InstallProgress
   Clear-BrandTree $Root

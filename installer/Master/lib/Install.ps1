@@ -329,17 +329,22 @@ function Install-ApprovedBrand {
   $catalogBrand = Get-CatalogBrand $loaded.Catalog $Brand
   $releaseMeta = Read-BrandReleaseFile (Join-MasterPath $RepoRoot @('brands', $Brand, 'release.json')) $Brand $catalogBrand
   $release = Select-ApprovedRelease $catalogBrand $Brand $Channel $Tag
-  Add-MasterJournal $LogDirectory ([pscustomobject]@{
-    step = 'release-selected'; brand = $Brand; tag = [string]$release.tag; version = [string]$release.version; channel = $Channel
-  })
-
-  $work = Join-Path -Path $InstallerData -ChildPath ('work-' + [guid]::NewGuid().ToString('n'))
-  New-Item -ItemType Directory -Force -Path $work | Out-Null
-  $parent = Split-Path -Parent $root
-  if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-  $staging = Join-Path -Path $parent -ChildPath ('.staging-{0}-{1}' -f $Brand, [guid]::NewGuid().ToString('n'))
+  $lockHeld = $false
+  $work = $null
+  $staging = $null
   $payload = $null
   try {
+    # Refuse a foreign brand or a downgrade before any extract, staging directory, lock, or supervisor stop.
+    Assert-InstallTargetAllowed -Root $root -Brand $Brand -Version ([string]$release.version) -AllowDowngrade:$AllowDowngrade
+    Add-MasterJournal $LogDirectory ([pscustomobject]@{
+      step = 'release-selected'; brand = $Brand; tag = [string]$release.tag; version = [string]$release.version; channel = $Channel
+    })
+
+    $work = Join-Path -Path $InstallerData -ChildPath ('work-' + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    $parent = Split-Path -Parent $root
+    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $staging = Join-Path -Path $parent -ChildPath ('.staging-{0}-{1}' -f $Brand, [guid]::NewGuid().ToString('n'))
     $payload = Receive-ApprovedPayload -Brand $Brand -Release $release -Source $Source -RepoRoot $RepoRoot -OfflineOnly:$OfflineOnly -WorkDirectory $work -Downloader $Downloader
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'payload-acquired'; source = $payload.Source; brand = $Brand; tag = [string]$release.tag })
     $manifest = Open-VerifiedBundle -Brand $Brand -Release $release -ZipPath $payload.Zip -ManifestPath $payload.Manifest -Staging $staging
@@ -353,17 +358,19 @@ function Install-ApprovedBrand {
       }
     }
     Assert-InstallSpace $root ([int64]$release.bytes)
-    # Refuse a foreign brand or a downgrade before the lock file exists and before any supervisor stop.
+    # Re-check immediately before the lock. A foreign or older target still must not be locked or stopped.
     Assert-InstallTargetAllowed -Root $root -Brand $Brand -Version ([string]$release.version) -AllowDowngrade:$AllowDowngrade
     # Hold the lock before the rename. WorkstationManager will not start a new PowerShell
     # while it exists. The renamed previous folder takes this copy with it, so the new
     # root gets a fresh lock before Windows Update or Defender run.
-    Set-BrandInstallLock $root | Out-Null
+    $heldLock = Set-BrandInstallLock $root
+    if (-not [string]::IsNullOrWhiteSpace([string]$heldLock)) { $lockHeld = $true }
     $stopped = @()
     if (-not $AllowUncheckedProcesses) { $stopped = @(Stop-BrandSupervisorProcesses -Root $root) }
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'supervisor-held'; brand = $Brand; stopped = @($stopped) })
     Install-VerifiedTree -Staging $staging -Root $root -Brand $Brand -Tag ([string]$release.tag) -Version ([string]$release.version) -ZipSha256 ([string]$release.sha256) -ProgressPath $progress -AllowDowngrade:$AllowDowngrade
-    Set-BrandInstallLock $root | Out-Null
+    $heldLock = Set-BrandInstallLock $root
+    if (-not [string]::IsNullOrWhiteSpace([string]$heldLock)) { $lockHeld = $true }
     if (-not $AllowUncheckedProcesses) { Stop-BrandSupervisorProcesses -Root $root | Out-Null }
     Write-TrustState $trust ([int]$loaded.Catalog.catalogSerial) $loaded.Digest
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'installed'; brand = $Brand; root = $root; tag = [string]$release.tag })
@@ -385,8 +392,8 @@ function Install-ApprovedBrand {
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'failed'; brand = $Brand; message = $_.Exception.Message })
     throw
   } finally {
-    if (-not $VerifyOnly) { Remove-BrandInstallLock $root }
-    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
-    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($lockHeld) { Remove-BrandInstallLock $root }
+    if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($work -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
   }
 }

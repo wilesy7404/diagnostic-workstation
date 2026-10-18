@@ -465,23 +465,41 @@ try {
     New-Item -ItemType Directory -Path $foreignApproved | Out-Null
     Write-Utf8NoBom (Join-Path $foreignApproved '.installed-bundle.json') '{"brand":"bmw","version":"1.0.0"}'
     Write-Utf8NoBom (Join-Path $foreignApproved 'Launcher.ps1') "Write-Output 'foreign-live'`n"
+    $foreignLock = [System.Text.Encoding]::UTF8.GetBytes("other-run lock`n")
+    [System.IO.File]::WriteAllBytes((Join-Path $foreignApproved 'install-in-progress.lock'), $foreignLock)
     Assert-Throws {
       Install-ApprovedBrand -Brand 'mercedes' -AllowTestRoot -InstallRoot $foreignApproved -InstallerData (Join-Path $temp 'foreign-approved-data') -LogDirectory (Join-Path $temp 'foreign-approved-logs') -RepoRoot $fixture -OfflineOnly
     } 'belongs to bmw'
     Assert-True ($script:TargetGuardCalls.Count -eq 0) ("wrong target reached {0}" -f ($script:TargetGuardCalls -join ','))
-    Assert-True (-not (Test-Path (Join-Path $foreignApproved 'install-in-progress.lock'))) 'wrong target wrote a lock'
+    $foreignLockAfter = [System.IO.File]::ReadAllBytes((Join-Path $foreignApproved 'install-in-progress.lock'))
+    Assert-True ((Get-BytesSha256 $foreignLock) -eq (Get-BytesSha256 $foreignLockAfter) -and $foreignLock.Length -eq $foreignLockAfter.Length) 'wrong target changed a pre-existing lock'
     Assert-True (([System.IO.File]::ReadAllText((Join-Path $foreignApproved 'Launcher.ps1'))) -match 'foreign-live') 'wrong target changed the foreign tree'
+    Assert-True (@(Get-ChildItem -LiteralPath (Split-Path -Parent $foreignApproved) -Force | Where-Object { $_.Name -like '.staging-*' }).Count -eq 0) 'wrong target left a staging directory'
+    $foreignJournal = Join-Path $temp 'foreign-approved-logs/install-journal.log'
+    if (Test-Path -LiteralPath $foreignJournal) {
+      $foreignJournalText = [System.IO.File]::ReadAllText($foreignJournal)
+      Assert-True ($foreignJournalText -notmatch 'payload-acquired') 'wrong target extracted a payload'
+    }
     $downgradeApproved = Join-Path $temp 'downgrade-approved'
     New-Item -ItemType Directory -Path $downgradeApproved | Out-Null
     Write-Utf8NoBom (Join-Path $downgradeApproved '.installed-bundle.json') '{"brand":"mercedes","version":"9.0.0"}'
     Write-Utf8NoBom (Join-Path $downgradeApproved 'Launcher.ps1') "Write-Output 'newer-live'`n"
+    $downgradeLock = [System.Text.Encoding]::UTF8.GetBytes("other-run lock`n")
+    [System.IO.File]::WriteAllBytes((Join-Path $downgradeApproved 'install-in-progress.lock'), $downgradeLock)
     $script:TargetGuardCalls.Clear()
     Assert-Throws {
       Install-ApprovedBrand -Brand 'mercedes' -AllowTestRoot -InstallRoot $downgradeApproved -InstallerData (Join-Path $temp 'downgrade-approved-data') -LogDirectory (Join-Path $temp 'downgrade-approved-logs') -RepoRoot $fixture -OfflineOnly
     } 'older approved version'
     Assert-True ($script:TargetGuardCalls.Count -eq 0) ("downgrade reached {0}" -f ($script:TargetGuardCalls -join ','))
-    Assert-True (-not (Test-Path (Join-Path $downgradeApproved 'install-in-progress.lock'))) 'downgrade wrote a lock'
+    $downgradeLockAfter = [System.IO.File]::ReadAllBytes((Join-Path $downgradeApproved 'install-in-progress.lock'))
+    Assert-True ((Get-BytesSha256 $downgradeLock) -eq (Get-BytesSha256 $downgradeLockAfter) -and $downgradeLock.Length -eq $downgradeLockAfter.Length) 'downgrade changed a pre-existing lock'
     Assert-True (([System.IO.File]::ReadAllText((Join-Path $downgradeApproved 'Launcher.ps1'))) -match 'newer-live') 'downgrade changed the installed tree'
+    Assert-True (@(Get-ChildItem -LiteralPath (Split-Path -Parent $downgradeApproved) -Force | Where-Object { $_.Name -like '.staging-*' }).Count -eq 0) 'downgrade left a staging directory'
+    $downgradeJournal = Join-Path $temp 'downgrade-approved-logs/install-journal.log'
+    if (Test-Path -LiteralPath $downgradeJournal) {
+      $downgradeJournalText = [System.IO.File]::ReadAllText($downgradeJournal)
+      Assert-True ($downgradeJournalText -notmatch 'payload-acquired') 'downgrade extracted a payload'
+    }
   } finally {
     ${function:Set-BrandInstallLock} = $savedLock
     ${function:Stop-BrandSupervisorProcesses} = $savedStop
