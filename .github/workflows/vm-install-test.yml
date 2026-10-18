@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mercedes_run_id:
-        description: 'Actions run id for the Mercedes bundle artifact. Used only when the catalog pins a Mercedes release.'
+        description: 'Actions run id for the Mercedes bundle artifact. Required when the catalog pins a Mercedes release. main pins mercedes-v0.1.3-beta.4; use 39091982618.'
         required: false
         default: ''
         type: string

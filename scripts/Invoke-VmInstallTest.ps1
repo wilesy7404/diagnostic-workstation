@@ -2,6 +2,7 @@
 # Runs Install-Master.ps1 -Source <offline> -OfflineOnly and records PASS, FAIL, NOT PROVEN, or NOT RUN.
 # NOT PROVEN and NOT RUN do not fail the job. Any FAIL does.
 # A brand with no catalog pin is NOT RUN. It is tested once a release is pinned.
+# main pins mercedes-v0.1.3-beta.4 and bmw-v1.0.2-beta.1, so both brands run when their artifact run ids are supplied.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$RepoRoot,
