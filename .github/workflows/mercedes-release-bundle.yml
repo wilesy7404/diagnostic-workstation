@@ -27,6 +27,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Push-Location manager
+          go test -count=1 .
+          if ($LASTEXITCODE -ne 0) { throw 'manager brand guard tests failed' }
+          Pop-Location
           python scripts/build-workstation-manager.py mercedes dist/WorkstationManager.exe --verify-reproducible
           if ($LASTEXITCODE -ne 0) { throw 'WorkstationManager build failed' }
       - name: Scan the exe for other brand logos

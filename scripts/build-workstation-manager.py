@@ -67,7 +67,11 @@ def stage_module(stage: Path, brand: str) -> None:
         raise SystemExit(f"no logo for {brand}; known brands: {known}")
     stage.mkdir(parents=True)
     (stage / "go.mod").write_bytes(lf_bytes((MANAGER / "go.mod").read_bytes()))
-    (stage / "main.go").write_bytes(lf_bytes((MANAGER / "main.go").read_bytes()))
+    sources = [path for path in MANAGER.glob("*.go") if not path.name.endswith("_test.go")]
+    if not any(path.name == "main.go" for path in sources):
+        raise SystemExit("manager/main.go is missing")
+    for source in sources:
+        (stage / source.name).write_bytes(lf_bytes(source.read_bytes()))
     assets = stage / "assets"
     for source in (MANAGER / "assets").rglob("*"):
         if not source.is_file():

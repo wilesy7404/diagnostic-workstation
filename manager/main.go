@@ -23,11 +23,6 @@ import (
 //go:embed assets/*
 var assets embed.FS
 
-// embeddedBrand is the manufacturer whose logo this exe was built with.
-// scripts/build-workstation-manager.py sets it with -ldflags -X.
-// Supervise mode does not read it. Install refuses any other brand.
-var embeddedBrand = ""
-
 const (
 	WS_OVERLAPPEDWINDOW = 0x00CF0000
 	WS_VISIBLE          = 0x10000000
@@ -122,9 +117,9 @@ type brand struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 	Short       string `json:"short"`
- Accent string `json:"accent"`
- AccentSoft string `json:"accentSoft"`
- Logo string `json:"logo"`
+	Accent      string `json:"accent"`
+	AccentSoft  string `json:"accentSoft"`
+	Logo        string `json:"logo"`
 	Apps        []app  `json:"apps"`
 }
 type app struct {
@@ -136,9 +131,9 @@ type profile struct {
 	DisplayName  string `json:"displayName"`
 	Short        string `json:"short"`
 	UpdateFamily string `json:"updateFamily"`
- Accent string `json:"accent"`
- AccentSoft string `json:"accentSoft"`
- Logo string `json:"logo"`
+	Accent       string `json:"accent"`
+	AccentSoft   string `json:"accentSoft"`
+	Logo         string `json:"logo"`
 }
 
 func ptr(s string) *uint16       { p, _ := syscall.UTF16PtrFromString(s); return p }
@@ -247,7 +242,7 @@ func wproc(h uintptr, msg uint32, w, l uintptr) uintptr {
 }
 func updateSelected() {
 	i, _, _ := sendMessage.Call(combo, CB_GETCURSEL, 0, 0)
-	if int(i) >= len(brands) {
+	if len(brands) == 0 || int(i) < 0 || int(i) >= len(brands) {
 		return
 	}
 	b := brands[i]
@@ -263,6 +258,7 @@ func mainUI() {
 	if err = json.Unmarshal(brandBytes, &brands); err != nil {
 		panic(err)
 	}
+	brands = brandsMatching(brands, embeddedBrand)
 	syscall.NewLazyDLL("comctl32.dll").NewProc("InitCommonControls").Call()
 	backgroundBrush, _, _ = createBrush.Call(color(16, 27, 43))
 	face := ptr("Segoe UI")
@@ -312,11 +308,35 @@ func mainUI() {
 	}
 }
 func selectedBrand() brand {
+	if len(brands) == 0 {
+		return brand{}
+	}
 	i, _, _ := sendMessage.Call(combo, CB_GETCURSEL, 0, 0)
 	if int(i) < 0 || int(i) >= len(brands) {
 		return brands[0]
 	}
 	return brands[i]
+}
+
+func brandsMatching(all []brand, embedded string) []brand {
+	if embedded == "" {
+		return all
+	}
+	ids := make([]string, len(all))
+	for i, b := range all {
+		ids[i] = b.ID
+	}
+	allowed := make(map[string]struct{}, 1)
+	for _, id := range keepBrandIDs(ids, embedded) {
+		allowed[id] = struct{}{}
+	}
+	next := make([]brand, 0, len(allowed))
+	for _, b := range all {
+		if _, ok := allowed[b.ID]; ok {
+			next = append(next, b)
+		}
+	}
+	return next
 }
 func selectInstall() {
 	b := selectedBrand()
@@ -412,8 +432,8 @@ func backupFile(src, backup string) {
 	}
 }
 func installEmbeddedLogos(root string, selected brand) error {
-	if embeddedBrand != "" && selected.ID != embeddedBrand {
-		return fmt.Errorf("this WorkstationManager build includes only the %s logo", embeddedBrand)
+	if err := brandInstallError(embeddedBrand, selected.ID); err != nil {
+		return err
 	}
 	entries, err := assets.ReadDir("assets/branding")
 	if err != nil {
@@ -429,7 +449,7 @@ func installEmbeddedLogos(root string, selected brand) error {
 		if !strings.HasSuffix(strings.ToLower(name), ".png") {
 			continue
 		}
-		if embeddedBrand != "" && name != embeddedBrand+".png" {
+		if name != embeddedBrand+".png" {
 			return fmt.Errorf("this WorkstationManager build includes only the %s logo", embeddedBrand)
 		}
 		raw, err := assets.ReadFile("assets/branding/" + name)
@@ -455,11 +475,11 @@ func installEmbeddedLogos(root string, selected brand) error {
 }
 
 func install(b brand, startup bool) error {
+	if err := brandInstallError(embeddedBrand, b.ID); err != nil {
+		return err
+	}
 	if os.Getenv("LOCALAPPDATA") == "" {
 		return errors.New("LOCALAPPDATA unavailable; sign in as a normal Windows user")
-	}
-	if embeddedBrand != "" && b.ID != embeddedBrand {
-		return fmt.Errorf("this WorkstationManager build includes only the %s logo", embeddedBrand)
 	}
 	root := installationRoot()
 	post("Preparing a clean installation for "+b.DisplayName, 8)
@@ -523,7 +543,7 @@ func install(b brand, startup bool) error {
 			return fmt.Errorf("could not update installed manager binary; close it first: %w", e)
 		}
 	}
-	p := profile{ID: b.ID, DisplayName: b.DisplayName, Short: b.Short, UpdateFamily: "universal", Accent:b.Accent, AccentSoft:b.AccentSoft, Logo:b.Logo}
+	p := profile{ID: b.ID, DisplayName: b.DisplayName, Short: b.Short, UpdateFamily: "universal", Accent: b.Accent, AccentSoft: b.AccentSoft, Logo: b.Logo}
 	pb, _ := json.MarshalIndent(p, "", "  ")
 	if e = os.WriteFile(filepath.Join(root, "profile.json"), pb, 0600); e != nil {
 		return e
@@ -695,6 +715,12 @@ func superviseFile(root, n string) {
 	}
 }
 func main() {
+	if len(os.Args) >= 2 && strings.EqualFold(os.Args[1], "/report-brand") {
+		if len(os.Args) != 3 || writeBrandReport(os.Args[2]) != nil {
+			os.Exit(2)
+		}
+		return
+	}
 	args := strings.ToLower(strings.Join(os.Args[1:], " "))
 	switch args {
 	case "/supervise", "--supervise":
