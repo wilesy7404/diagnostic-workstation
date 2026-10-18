@@ -63,3 +63,5 @@ jobs:
         run: |
           set -euo pipefail
           pwsh -NoProfile -File scripts/Test-MasterInstaller.ps1
+          pwsh -NoProfile -File scripts/Test-MercedesUpdater.ps1
+          pwsh -NoProfile -File scripts/Test-BmwBundle.ps1

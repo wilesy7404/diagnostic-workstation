@@ -1,6 +1,6 @@
 # BMW GitHub updater bootstrap
 
-The first-stage BMW updater checks the public GitHub Releases API at startup and approximately every six hours. It can identify a published newer release and update local status without authentication.
+The BMW updater checks the public GitHub Releases API at startup and approximately every six hours. The copy shipped in the brand bundle selects `bmw-v*` tags (for example `bmw-v1.0.2-beta.1`) and ignores retired bare `v*` tags. It can identify a published newer release and update local status without authentication.
 
 **Current limitation:** it is a check-only bootstrap, not an automatic installer. We will enable Update Now / Later only after publishing a validated core package and testing checksums, backups, transactional install and rollback on the BMW device.
 

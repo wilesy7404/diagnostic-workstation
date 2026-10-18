@@ -208,7 +208,13 @@ Assert-True ((Get-ReleaseSummary "# Hello`r`n`nSecond") -eq 'Hello') 'release su
 Assert-True ((Get-ReleaseSummary '') -eq '') 'empty release notes were not skipped'
 
 $launcher = Get-Content -LiteralPath (Join-Path $source 'Launcher.ps1') -Raw
-Assert-True ($launcher -match '#C0C6CE' -and $launcher -match '#D0D5DB') 'Launcher silver tweaks are missing'
+Assert-True ($launcher -match '#C0C6CE') 'Launcher silver accent is missing'
+Assert-True ($launcher -notmatch '#D0D5DB') 'Launcher still uses the retired admin silver'
+Assert-True ($launcher -match 'DWMWA_WINDOW_CORNER_PREFERENCE') 'Admin dialog is missing the rounded-corner chrome'
+Assert-True ($launcher -match 'BorderThickness="0"') 'Admin dialog still has an outer border'
+Assert-True ($launcher -match 'No AllowsTransparency') 'Admin dialog does not record the opaque chrome'
+Assert-True ($launcher -notmatch 'AllowsTransparency\s*=') 'Admin dialog sets AllowsTransparency'
+Assert-True ($launcher -match 'Bold description text on home cards') 'Bold card description setting is missing'
 Assert-True ($launcher -match 'offline.\{.s=.Offline') 'footer does not show offline'
 Assert-True ($launcher -notmatch 'UNIVERSAL_BRAND_WORKSTATION') 'footer still uses the long brand status'
 Assert-True ($launcher -match 'LAUNCHER SETTINGS') 'settings popup was removed'
@@ -235,16 +241,21 @@ $workflow = Get-Content -LiteralPath (Join-Path $repo '.github/workflows/mercede
 Assert-True ($workflow -notmatch 'gh release') 'workflow publishes a release'
 Assert-True ($workflow -notmatch 'contents:\s*write') 'workflow requests write permission'
 Assert-True ($workflow -match 'workflow_dispatch') 'workflow is not manual'
+Assert-True ($workflow -match "default:\s*'0\.1\.3-beta\.3'") 'workflow default is not 0.1.3-beta.3'
+Assert-True ($workflow -notmatch 'inputs\.version \}\}"\s*=') 'workflow still hard-pins one version'
 
 $python = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $python) { throw 'python3 is required to build the bundle' }
-& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.2'
+& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.3'
 if ($LASTEXITCODE -ne 0) { throw 'bundle build failed' }
-$dist = Join-Path $repo 'dist/mercedes-v0.1.3-beta.2'
+$dist = Join-Path $repo 'dist/mercedes-v0.1.3-beta.3'
 $builtManifest = Get-Content -LiteralPath (Join-Path $dist 'update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-Assert-True ($builtManifest.tag -eq 'mercedes-v0.1.3-beta.2') 'bundle tag is wrong'
-Assert-True ($builtManifest.version -eq '0.1.3-beta.2') 'bundle version is wrong'
-Assert-True (@($builtManifest.files).Count -eq 28) 'bundle does not contain 28 files'
+Assert-True ($builtManifest.tag -eq 'mercedes-v0.1.3-beta.3') 'bundle tag is wrong'
+Assert-True ($builtManifest.version -eq '0.1.3-beta.3') 'bundle version is wrong'
+Assert-True (@($builtManifest.files).Count -eq 20) 'bundle does not contain 20 files'
+$logoNames = @($builtManifest.files | ForEach-Object { [string]$_.path } | Where-Object { $_ -like 'branding/*.png' })
+Assert-True ($logoNames.Count -eq 1 -and $logoNames[0] -eq 'branding/mercedes.png') 'bundle did not ship only the Mercedes logo'
+Assert-True (@($builtManifest.files | Where-Object { $_.path -eq 'profile.json' }).Count -eq 1) 'profile.json was not packaged'
 $zipBytes = [System.IO.File]::ReadAllBytes((Join-Path $dist 'workstation.zip'))
 Assert-True ([int64]$zipBytes.Length -eq [int64]$builtManifest.bytes) 'zip size does not match the manifest'
 $zipHash = (Get-FileHash -LiteralPath (Join-Path $dist 'workstation.zip') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -256,12 +267,26 @@ try {
   [System.IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $dist 'workstation.zip'), $extract)
   $verified = Test-ManifestPackage $extract (Join-Path $dist 'update-manifest.json')
   Assert-RequiredPackageFiles $verified
-  Assert-ManifestIdentity $verified 'mercedes-v0.1.3-beta.2' 'mercedes-v'
+  Assert-ManifestIdentity $verified 'mercedes-v0.1.3-beta.3' 'mercedes-v'
   foreach ($name in @('apps.json','controls-pin.json','update-settings.json')) {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $extract $name))) "$name was packaged"
   }
+  $packagedVersion = [System.IO.File]::ReadAllText((Join-Path $extract 'version.json'))
+  Assert-True ($packagedVersion -eq '{"version":"0.1.3-beta.3"}') 'version.json is not the canonical beta.3 file'
+  Assert-True (Test-Path -LiteralPath (Join-Path $extract 'profile.json')) 'extracted bundle is missing profile.json'
+  Assert-True (Test-Path -LiteralPath (Join-Path $extract 'branding/mercedes.png')) 'extracted bundle is missing the Mercedes logo'
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $extract 'branding/bmw.png'))) 'extracted bundle contains the BMW logo'
 } finally {
   Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+& python3 (Join-Path $repo 'scripts/build-mercedes-bundle.py') '0.1.3-beta.4'
+if ($LASTEXITCODE -ne 0) { throw 'parameterized bundle build failed' }
+$later = Join-Path $repo 'dist/mercedes-v0.1.3-beta.4'
+$laterManifest = Get-Content -LiteralPath (Join-Path $later 'update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+Assert-True ($laterManifest.tag -eq 'mercedes-v0.1.3-beta.4') 'a later version still required a guard edit'
+$sourceVersion = [System.IO.File]::ReadAllText((Join-Path $source 'version.json'))
+Assert-True ($sourceVersion -eq '{"version":"0.1.3-beta.3"}') 'building another version rewrote source version.json'
+Remove-Item -LiteralPath $later -Recurse -Force
 
 Write-Output 'Mercedes updater checks passed'

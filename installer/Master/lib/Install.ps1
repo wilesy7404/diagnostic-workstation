@@ -110,7 +110,7 @@ function Assert-InstallSpace {
 function Copy-PreservedTree {
   param([Parameter(Mandatory = $true)][string]$From, [Parameter(Mandatory = $true)][string]$To)
   if (-not (Test-Path -LiteralPath $From -PathType Container)) { return }
-  foreach ($name in $script:MasterPreserveFiles) {
+  foreach ($name in @($script:MasterPreserveFiles + $script:MasterCarryExistingFiles)) {
     $src = Join-Path -Path $From -ChildPath $name
     if (Test-Path -LiteralPath $src -PathType Leaf) {
       Copy-Item -LiteralPath $src -Destination (Join-Path -Path $To -ChildPath $name) -Force
