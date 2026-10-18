@@ -1,7 +1,7 @@
 {
   "schema": "diagnostic-workstation.versions.lock/v1",
   "appendOnly": true,
-  "note": "Append-only. Do not edit or remove an existing entry. Historical entries are not catalog pins and must not be re-minted.",
+  "note": "Append-only. Do not edit or remove an existing entry. Historical entries are not catalog pins and must not be re-minted. sourceCommit is the commit the tag points to, not build provenance. BMW v1.0.1-beta.1, v1.0.1-beta.2, and v1.0.1-beta.3 all point at 186efe7531a6019dff2ebec56823de367d780a52 and have different zip bytes.",
   "entries": [
     {
       "brand": "bmw",

@@ -31,7 +31,11 @@ Other brand ids are refused. The installer copies `apps.json`, `controls-pin.jso
 
 `profile.json` does ship in the bundle. A new install receives that default. If the brand folder already has `profile.json`, the installer keeps the machine copy and does not overwrite it.
 
-`WorkstationManager.exe` is the supervisor for every brand. BMW still uses `Watchdog.ps1` until a later migration. This installer does not start either program and does not write Winlogon, shell, or Run values.
+The install marker `.installed-bundle.json` records Mercedes supervisor `WorkstationManager.exe` and BMW supervisor `Watchdog.ps1`. WorkstationManager migration for BMW is later. This installer does not start either program and does not write Winlogon, shell, or Run values.
+
+The Mercedes `WorkstationManager.exe` in the pinned `0.1.3-beta.4` bundle uses `godebug default=go1.20`. With that setting, `netedns0` is omitted. `godebug default=go1.16` would include it. The build stays on `go1.20` because the program does not use DNS. When `brands.json` does not contain the embedded brand, the install prompt title is `Install ` with a blank name. That is a known cosmetic issue for the next exe rebuild. `manager/` and the current exe are unchanged.
+
+`releases/versions.lock.json` is append-only. `sourceCommit` is the commit the tag points to, not build provenance. BMW `v1.0.1-beta.1`, `v1.0.1-beta.2`, and `v1.0.1-beta.3` all point at `186efe7531a6019dff2ebec56823de367d780a52` and have different zip bytes.
 
 ## Bundle builds
 

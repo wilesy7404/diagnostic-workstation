@@ -245,8 +245,8 @@ function Get-BrandAllowMap {
       TagPrefix = 'bmw-v'
       Root = 'BMW-Stealth-Launcher'
       RootBase = 'LOCALAPPDATA'
-      Supervisor = 'WorkstationManager.exe'
-      SupervisorNote = 'BMW still uses Watchdog.ps1 on installed machines. Moving BMW onto WorkstationManager.exe is a later change. This installer does not switch BMW startup.'
+      Supervisor = 'Watchdog.ps1'
+      SupervisorNote = 'The BMW bundle supervisor is the transitional Watchdog.ps1. WorkstationManager.exe migration is later. This installer does not register Run or Winlogon startup.'
     }
   }
 }
