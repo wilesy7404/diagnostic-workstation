@@ -8,7 +8,7 @@ Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, 
 
 `workstation.zip` is 1416210 bytes, SHA-256 `0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a`. `update-manifest.json` is 3338 bytes, SHA-256 `fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528`. contentDigest `af87858cc58bf0f66cd379ff88cdb07f9508b1e6490275a02cea9d483e58af67`. Workflow run [39087424705](https://github.com/wilesy7404/diagnostic-workstation/actions/runs/39087424705).
 
-Changes since the prior Mercedes label:
+Changes since the prior Mercedes label `mercedes-v0.1.3-beta.2`:
 
 - The bundle ships only its own logo, `branding/mercedes.png`.
 - `apps.json` is removed from the bundle and kept on the machine.
@@ -51,11 +51,11 @@ Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, 
 
 `workstation.zip` is 48955 bytes, SHA-256 `77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978`. `update-manifest.json` is 2554 bytes, SHA-256 `82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136`. contentDigest `e07829490aff1f4de7ae919fb9d2cd86f4ddc64ed684c5d1e14d1537753b5cd9`. Workflow run [39087426283](https://github.com/wilesy7404/diagnostic-workstation/actions/runs/39087426283).
 
-Changes since the prior BMW label:
+Changes since the prior BMW label `v1.0.1-beta.5`:
 
 - The bundle ships only its own logo, `branding/bmw.png`.
 - `apps.json` is removed from the bundle and kept on the machine.
-- `WorkstationManager.exe` is the supervisor. `Watchdog.ps1` remains the transitional entry until a later migration.
+- The supervisor is the transitional `Watchdog.ps1`. The WorkstationManager migration is later.
 - An existing `profile.json` is kept. A fresh install receives the bundle default.
 - Non-ASCII `.ps1` files that had no UTF-8 BOM get that BOM during packaging. Every non-ASCII BMW script in this bundle already had a BOM, so none of those bytes changed.
 - The updater targets `bmw-v*` tags.

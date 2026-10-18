@@ -1,7 +1,7 @@
 {
   "schema": "diagnostic-workstation.catalog/v1",
   "catalogSerial": 2,
-  "issuedUtc": "2026-10-17T22:00:00Z",
+  "issuedUtc": "2026-10-18T02:00:00Z",
   "expiresUtc": "2027-04-15T00:00:00Z",
   "signatureStatus": "placeholder-untrusted",
   "repo": "wilesy7404/diagnostic-workstation",
@@ -50,9 +50,9 @@
         "rootBase": "LOCALAPPDATA"
       },
       "supervisor": {
-        "entry": "WorkstationManager.exe",
+        "entry": "Watchdog.ps1",
         "transitionalEntry": "Watchdog.ps1",
-        "note": "BMW Watchdog migration is later and out of scope. This installer does not change BMW startup."
+        "note": "The BMW bundle supervisor is the transitional Watchdog.ps1. WorkstationManager.exe migration is later. This installer does not register Run or Winlogon startup."
       },
       "releases": [
         {

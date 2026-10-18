@@ -22,15 +22,43 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
   if ($message -notmatch $Pattern) { throw "message '$message' did not match $Pattern" }
 }
 function Assert-SameLockValue($Actual, $Expected, [string]$Label) {
-  if ($null -eq $Expected) {
-    Assert-True ($null -eq $Actual) "$Label changed"
-    return
+  $same = $false
+  if ($null -eq $Expected -and $null -eq $Actual) {
+    $same = $true
+  } elseif ($null -eq $Expected -or $null -eq $Actual) {
+    $same = $false
+  } else {
+    $same = $Actual -ceq $Expected
   }
-  if ($Expected -is [bool]) {
-    Assert-True ($Actual -is [bool] -and $Actual -eq $Expected) "$Label changed"
-    return
+  Assert-True $same "$Label changed"
+}
+function Get-LockFieldKey($Row) {
+  $names = @($Row.PSObject.Properties.Name)
+  return ((@($names | Sort-Object)) -join "`n")
+}
+function Assert-VersionsLockPrefix($ActualEntries, $ExpectedEntries) {
+  $actual = @($ActualEntries)
+  $expected = @($ExpectedEntries)
+  if ($actual.Count -lt $expected.Count) {
+    throw 'versions lock dropped or reordered an entry'
   }
-  Assert-True ([string]$Actual -eq [string]$Expected) "$Label changed"
+  for ($i = 0; $i -lt $expected.Count; $i++) {
+    $actualKey = Get-LockFieldKey $actual[$i]
+    $expectedKey = Get-LockFieldKey $expected[$i]
+    if ($actualKey -cne $expectedKey) {
+      throw "versions.lock[$i] fields changed"
+    }
+    $actualBrand = [string]$actual[$i].brand
+    $expectedBrand = [string]$expected[$i].brand
+    $actualVersion = [string]$actual[$i].version
+    $expectedVersion = [string]$expected[$i].version
+    if ($actualBrand -cne $expectedBrand -or $actualVersion -cne $expectedVersion) {
+      throw "versions.lock[$i] was reordered or replaced"
+    }
+    foreach ($field in @($expected[$i].PSObject.Properties.Name)) {
+      Assert-SameLockValue $actual[$i].$field $expected[$i].$field "versions.lock[$i].$field"
+    }
+  }
 }
 function Get-BytesSha256([byte[]]$Bytes) {
   $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -804,29 +832,63 @@ try {
   Install-VerifiedTree -Staging $emptyStage -Root $emptyRoot -Brand 'bmw' -Tag 'bmw-v1.0.2-beta.1' -Version '1.0.2-beta.1' -ZipSha256 ('e' * 64)
   Assert-True (([System.IO.File]::ReadAllText((Join-Path $emptyRoot 'profile.json'))) -match 'BundleDefault') 'install without profile.json dropped the bundle default'
 
+  # Case, field-set, reorder, and removal failures. An appended row stays allowed.
+  $lockSample = @(
+    [pscustomobject]@{ brand = 'bmw'; version = '1'; zipSha256 = 'abc'; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '2'; zipSha256 = 'def'; note = $null }
+  )
+  $lockCase = @(
+    [pscustomobject]@{ brand = 'bmw'; version = '1'; zipSha256 = 'ABC'; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '2'; zipSha256 = 'def'; note = $null }
+  )
+  Assert-Throws { Assert-VersionsLockPrefix $lockCase $lockSample } 'zipSha256 changed'
+  $lockAdded = @(
+    [pscustomobject]@{ brand = 'bmw'; version = '1'; zipSha256 = 'abc'; note = $null; extra = 1 },
+    [pscustomobject]@{ brand = 'mercedes'; version = '2'; zipSha256 = 'def'; note = $null }
+  )
+  Assert-Throws { Assert-VersionsLockPrefix $lockAdded $lockSample } 'fields changed'
+  $lockRemovedField = @(
+    [pscustomobject]@{ brand = 'bmw'; version = '1'; zipSha256 = 'abc' },
+    [pscustomobject]@{ brand = 'mercedes'; version = '2'; zipSha256 = 'def'; note = $null }
+  )
+  Assert-Throws { Assert-VersionsLockPrefix $lockRemovedField $lockSample } 'fields changed'
+  $lockReordered = @(
+    [pscustomobject]@{ brand = 'mercedes'; version = '2'; zipSha256 = 'def'; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1'; zipSha256 = 'abc'; note = $null }
+  )
+  Assert-Throws { Assert-VersionsLockPrefix $lockReordered $lockSample } 'reordered or replaced'
+  $lockDropped = @(
+    [pscustomobject]@{ brand = 'bmw'; version = '1'; zipSha256 = 'abc'; note = $null }
+  )
+  Assert-Throws { Assert-VersionsLockPrefix $lockDropped $lockSample } 'dropped'
+  $lockAppended = @(
+    [pscustomobject]@{ brand = 'bmw'; version = '1'; zipSha256 = 'abc'; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '2'; zipSha256 = 'def'; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '3'; zipSha256 = 'fff' }
+  )
+  Assert-VersionsLockPrefix $lockAppended $lockSample
+
   # Frozen prefix of releases/versions.lock.json. New rows may be appended after these.
-  # Do not edit an existing expected entry.
+  # Do not edit, reorder, or drop an existing expected entry. Hashes compare with -ceq.
   $lock = Get-Content -LiteralPath (Join-Path $repo 'releases/versions.lock.json') -Raw | ConvertFrom-Json
   Assert-True ([string]$lock.schema -eq 'diagnostic-workstation.versions.lock/v1') 'versions lock schema'
   Assert-True ($lock.appendOnly -eq $true) 'versions lock must stay append-only'
   $lockExpected = @(
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.5'; contentDigest = $null; zipSha256 = '20e0f50cb73b72c5d3ebdcfe5302ac0b111916d01d6f9900bd5bc548e3c11cc3'; manifestSha256 = 'ca0aaf2a7b9b703f2b6264787a9b07df3d83bcb77059df7a0732150e7ebbc620'; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.2-beta.1'; contentDigest = $null; zipSha256 = $null; manifestSha256 = $null; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = 'hash not recorded' },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.1'; contentDigest = $null; zipSha256 = '17a3a1d81d613db216e4a9b939ee7dccac0b8b1c7a19133fc4b02d0d911e5db2'; manifestSha256 = 'fc1a063d9a78eef292a78e99e9c292f53c209927d7e734a2b49355739a33250f'; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.2'; contentDigest = $null; zipSha256 = 'be8fbfe5164ae8e511965d23f163644fb0166b6c7febffbc041d15e4a261d773'; manifestSha256 = '60c975f309428d7569058357f610afa323cb5c50400bc3a5115f6a548f529b82'; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.3'; contentDigest = 'af87858cc58bf0f66cd379ff88cdb07f9508b1e6490275a02cea9d483e58af67'; zipSha256 = '0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a'; manifestSha256 = 'fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528'; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087424705'; historical = $false; neverReMint = $false; note = $null },
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.2-beta.1'; contentDigest = 'e07829490aff1f4de7ae919fb9d2cd86f4ddc64ed684c5d1e14d1537753b5cd9'; zipSha256 = '77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978'; manifestSha256 = '82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136'; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087426283'; historical = $false; neverReMint = $false; note = $null }
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.5'; contentDigest = $null; zipSha256 = '20e0f50cb73b72c5d3ebdcfe5302ac0b111916d01d6f9900bd5bc548e3c11cc3'; zipBytes = 15770; manifestSha256 = 'ca0aaf2a7b9b703f2b6264787a9b07df3d83bcb77059df7a0732150e7ebbc620'; manifestBytes = 142; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.2-beta.1'; contentDigest = $null; zipSha256 = $null; zipBytes = $null; manifestSha256 = $null; manifestBytes = $null; fileCount = $null; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = 'hash not recorded' },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.1'; contentDigest = $null; zipSha256 = '17a3a1d81d613db216e4a9b939ee7dccac0b8b1c7a19133fc4b02d0d911e5db2'; zipBytes = 1507918; manifestSha256 = 'fc1a063d9a78eef292a78e99e9c292f53c209927d7e734a2b49355739a33250f'; manifestBytes = 4562; fileCount = 28; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.2'; contentDigest = $null; zipSha256 = 'be8fbfe5164ae8e511965d23f163644fb0166b6c7febffbc041d15e4a261d773'; zipBytes = 1509019; manifestSha256 = '60c975f309428d7569058357f610afa323cb5c50400bc3a5115f6a548f529b82'; manifestBytes = 4562; fileCount = 28; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.3'; contentDigest = 'af87858cc58bf0f66cd379ff88cdb07f9508b1e6490275a02cea9d483e58af67'; zipSha256 = '0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a'; zipBytes = 1416210; manifestSha256 = 'fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528'; manifestBytes = 3338; fileCount = 20; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087424705'; historical = $false; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.2-beta.1'; contentDigest = 'e07829490aff1f4de7ae919fb9d2cd86f4ddc64ed684c5d1e14d1537753b5cd9'; zipSha256 = '77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978'; zipBytes = 48955; manifestSha256 = '82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136'; manifestBytes = 2554; fileCount = 15; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087426283'; historical = $false; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.1'; contentDigest = $null; zipSha256 = 'ba9ee12f23a9043196788d4fc7778971f86bc360dcee0a2e26cb20dc687d0eea'; zipBytes = 14323; manifestSha256 = '9cc8b683feed58593744b270824bb524ba823a423a2e50da7acacf4c1ef240de'; manifestBytes = 185; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.2'; contentDigest = $null; zipSha256 = 'd9ed100f4da72dfce1669ae5471134d3f24d59ee0854daf11209cd434892d2b2'; zipBytes = 14468; manifestSha256 = '720516f77ca3d6725f5296471b12c506558eb89910c4c8e1ad16ef5ff16d7379'; manifestBytes = 185; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.3'; contentDigest = $null; zipSha256 = '2dcb3d16abb73778c5983a579125d76ceba84694c7531768987be90a77673a15'; zipBytes = 14427; manifestSha256 = '7ca65fed48f9ef990c36eabbfb1b723f481b02b7825ffbbda2e8305c5afe06e8'; manifestBytes = 185; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.4'; contentDigest = $null; zipSha256 = '7e9ba028d09dabe49b68de72aa0c0daf1036c18ef107bac52bca3296df076186'; zipBytes = 14643; manifestSha256 = '68ab06ec6e99310ea652bb5d782f96514dd4b8269fdd44f2389f2571feefafd1'; manifestBytes = 141; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null }
   )
   $lockEntries = @($lock.entries)
-  Assert-True ($lockEntries.Count -ge $lockExpected.Count) 'versions lock dropped an entry'
-  $lockFields = @('brand', 'version', 'contentDigest', 'zipSha256', 'manifestSha256', 'sourceCommit', 'workflowRunId', 'historical', 'neverReMint', 'note')
-  for ($i = 0; $i -lt $lockExpected.Count; $i++) {
-    foreach ($field in $lockFields) {
-      Assert-SameLockValue $lockEntries[$i].$field $lockExpected[$i].$field "versions.lock[$i].$field"
-    }
-  }
-  Assert-True ([string]$lockEntries[4].zipSha256 -eq [string]$mercedesPin.sha256 -and [string]$lockEntries[4].manifestSha256 -eq [string]$mercedesPin.manifestSha256) 'mercedes lock does not match the catalog pin'
-  Assert-True ([string]$lockEntries[5].zipSha256 -eq [string]$bmwPin.sha256 -and [string]$lockEntries[5].manifestSha256 -eq [string]$bmwPin.manifestSha256) 'bmw lock does not match the catalog pin'
+  Assert-VersionsLockPrefix $lockEntries $lockExpected
+  Assert-True ($lockEntries[4].zipSha256 -ceq [string]$mercedesPin.sha256 -and $lockEntries[4].manifestSha256 -ceq [string]$mercedesPin.manifestSha256 -and [int64]$lockEntries[4].zipBytes -ceq [int64]$mercedesPin.bytes -and [int64]$lockEntries[4].manifestBytes -ceq [int64]$mercedesPin.manifestBytes) 'mercedes lock does not match the catalog pin'
+  Assert-True ($lockEntries[5].zipSha256 -ceq [string]$bmwPin.sha256 -and $lockEntries[5].manifestSha256 -ceq [string]$bmwPin.manifestSha256 -and [int64]$lockEntries[5].zipBytes -ceq [int64]$bmwPin.bytes -and [int64]$lockEntries[5].manifestBytes -ceq [int64]$bmwPin.manifestBytes) 'bmw lock does not match the catalog pin'
 
   Write-Output 'Master installer checks passed.'
 } catch {
