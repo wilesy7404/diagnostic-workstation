@@ -21,16 +21,45 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
   if (-not $threw) { throw "expected failure matching $Pattern" }
   if ($message -notmatch $Pattern) { throw "message '$message' did not match $Pattern" }
 }
+function Test-LockNumber($Value) {
+  return (
+    $Value -is [byte] -or $Value -is [int16] -or $Value -is [int32] -or $Value -is [int64] -or
+    $Value -is [uint16] -or $Value -is [uint32] -or $Value -is [uint64] -or
+    $Value -is [decimal] -or $Value -is [double] -or $Value -is [single]
+  )
+}
 function Assert-SameLockValue($Actual, $Expected, [string]$Label) {
-  $same = $false
-  if ($null -eq $Expected -and $null -eq $Actual) {
-    $same = $true
-  } elseif ($null -eq $Expected -or $null -eq $Actual) {
-    $same = $false
-  } else {
-    $same = $Actual -ceq $Expected
+  if ($null -eq $Expected -and $null -eq $Actual) { return }
+  if ($null -eq $Expected -or $null -eq $Actual) {
+    throw "$Label changed"
   }
-  Assert-True $same "$Label changed"
+  $actualNumber = Test-LockNumber $Actual
+  $expectedNumber = Test-LockNumber $Expected
+  $sameType = $false
+  if ($actualNumber -or $expectedNumber) {
+    $sameType = $actualNumber -and $expectedNumber
+  } else {
+    $sameType = $Actual.GetType() -eq $Expected.GetType()
+  }
+  if (-not $sameType) { throw "$Label type mismatch" }
+  if (-not ($Actual -ceq $Expected)) { throw "$Label changed" }
+}
+function Assert-LockRowIdentities($Entries) {
+  $rows = @($Entries)
+  $seenIdentity = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+  $seenTag = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+  foreach ($row in $rows) {
+    $identity = ([string]$row.brand) + "`n" + ([string]$row.version)
+    if (-not $seenIdentity.Add($identity)) {
+      throw "versions lock duplicate brand and version $($row.brand) $($row.version)"
+    }
+    if ($null -ne $row.tag) {
+      $tag = [string]$row.tag
+      if (-not $seenTag.Add($tag)) {
+        throw "versions lock duplicate tag $tag"
+      }
+    }
+  }
 }
 function Get-LockFieldKey($Row) {
   $names = @($Row.PSObject.Properties.Name)
@@ -875,26 +904,50 @@ try {
     [pscustomobject]@{ brand = 'bmw'; version = '3'; zipSha256 = 'fff' }
   )
   Assert-VersionsLockPrefix $lockAppended $lockSample
+  Assert-Throws {
+    Assert-LockRowIdentities @(
+      [pscustomobject]@{ brand = 'bmw'; version = '1'; tag = 'v1' },
+      [pscustomobject]@{ brand = 'bmw'; version = '1'; tag = 'v2' }
+    )
+  } 'duplicate brand and version'
+  Assert-Throws {
+    Assert-LockRowIdentities @(
+      [pscustomobject]@{ brand = 'bmw'; version = '1'; tag = 'v1' },
+      [pscustomobject]@{ brand = 'mercedes'; version = '2'; tag = 'v1' }
+    )
+  } 'duplicate tag'
+  Assert-LockRowIdentities @(
+    [pscustomobject]@{ brand = 'bmw'; version = '1'; tag = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '2'; tag = $null }
+  )
+  $typedExpected = @([pscustomobject]@{ brand = 'bmw'; version = '1'; zipBytes = 48955; voided = $true })
+  Assert-Throws {
+    Assert-VersionsLockPrefix @([pscustomobject]@{ brand = 'bmw'; version = '1'; zipBytes = '48955'; voided = $true }) $typedExpected
+  } 'zipBytes type mismatch'
+  Assert-Throws {
+    Assert-VersionsLockPrefix @([pscustomobject]@{ brand = 'bmw'; version = '1'; zipBytes = 48955; voided = 1 }) $typedExpected
+  } 'voided type mismatch'
 
   # Frozen prefix of releases/versions.lock.json. New rows may be appended after these.
-  # Do not edit, reorder, or drop an existing expected entry. Hashes compare with -ceq.
+  # Do not edit, reorder, or drop an existing expected entry. Values are case-sensitive and type-strict.
   $lock = Get-Content -LiteralPath (Join-Path $repo 'releases/versions.lock.json') -Raw | ConvertFrom-Json
   Assert-True ([string]$lock.schema -eq 'diagnostic-workstation.versions.lock/v1') 'versions lock schema'
   Assert-True ($lock.appendOnly -eq $true) 'versions lock must stay append-only'
   $lockExpected = @(
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.5'; contentDigest = $null; zipSha256 = '20e0f50cb73b72c5d3ebdcfe5302ac0b111916d01d6f9900bd5bc548e3c11cc3'; zipBytes = 15770; manifestSha256 = 'ca0aaf2a7b9b703f2b6264787a9b07df3d83bcb77059df7a0732150e7ebbc620'; manifestBytes = 142; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.2-beta.1'; contentDigest = $null; zipSha256 = $null; zipBytes = $null; manifestSha256 = $null; manifestBytes = $null; fileCount = $null; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = 'hash not recorded' },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.1'; contentDigest = $null; zipSha256 = '17a3a1d81d613db216e4a9b939ee7dccac0b8b1c7a19133fc4b02d0d911e5db2'; zipBytes = 1507918; manifestSha256 = 'fc1a063d9a78eef292a78e99e9c292f53c209927d7e734a2b49355739a33250f'; manifestBytes = 4562; fileCount = 28; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.2'; contentDigest = $null; zipSha256 = 'be8fbfe5164ae8e511965d23f163644fb0166b6c7febffbc041d15e4a261d773'; zipBytes = 1509019; manifestSha256 = '60c975f309428d7569058357f610afa323cb5c50400bc3a5115f6a548f529b82'; manifestBytes = 4562; fileCount = 28; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.3'; contentDigest = 'af87858cc58bf0f66cd379ff88cdb07f9508b1e6490275a02cea9d483e58af67'; zipSha256 = '0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a'; zipBytes = 1416210; manifestSha256 = 'fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528'; manifestBytes = 3338; fileCount = 20; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087424705'; historical = $true; neverReMint = $true; voided = $true; published = $false; note = 'Built from 7b6befdf as run 39087424705, never tagged or published. Voided because WorkstationManager.exe embedded all brand logos. Superseded by 0.1.3-beta.4.' },
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.2-beta.1'; contentDigest = 'e07829490aff1f4de7ae919fb9d2cd86f4ddc64ed684c5d1e14d1537753b5cd9'; zipSha256 = '77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978'; zipBytes = 48955; manifestSha256 = '82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136'; manifestBytes = 2554; fileCount = 15; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087426283'; historical = $false; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.1'; contentDigest = $null; zipSha256 = 'ba9ee12f23a9043196788d4fc7778971f86bc360dcee0a2e26cb20dc687d0eea'; zipBytes = 14323; manifestSha256 = '9cc8b683feed58593744b270824bb524ba823a423a2e50da7acacf4c1ef240de'; manifestBytes = 185; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.2'; contentDigest = $null; zipSha256 = 'd9ed100f4da72dfce1669ae5471134d3f24d59ee0854daf11209cd434892d2b2'; zipBytes = 14468; manifestSha256 = '720516f77ca3d6725f5296471b12c506558eb89910c4c8e1ad16ef5ff16d7379'; manifestBytes = 185; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.3'; contentDigest = $null; zipSha256 = '2dcb3d16abb73778c5983a579125d76ceba84694c7531768987be90a77673a15'; zipBytes = 14427; manifestSha256 = '7ca65fed48f9ef990c36eabbfb1b723f481b02b7825ffbbda2e8305c5afe06e8'; manifestBytes = 185; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null },
-    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.4'; contentDigest = $null; zipSha256 = '7e9ba028d09dabe49b68de72aa0c0daf1036c18ef107bac52bca3296df076186'; zipBytes = 14643; manifestSha256 = '68ab06ec6e99310ea652bb5d782f96514dd4b8269fdd44f2389f2571feefafd1'; manifestBytes = 141; fileCount = 5; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; note = $null }
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.5'; tag = 'v1.0.1-beta.5'; contentDigest = $null; zipSha256 = '20e0f50cb73b72c5d3ebdcfe5302ac0b111916d01d6f9900bd5bc548e3c11cc3'; zipBytes = 15770; manifestSha256 = 'ca0aaf2a7b9b703f2b6264787a9b07df3d83bcb77059df7a0732150e7ebbc620'; manifestBytes = 142; fileCount = 5; sourceCommit = 'b072d0ebf0102e8bc06312d598cc0637fb900ad3'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.2-beta.1'; tag = $null; contentDigest = $null; zipSha256 = $null; zipBytes = $null; manifestSha256 = $null; manifestBytes = $null; fileCount = $null; sourceCommit = $null; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $null; note = 'hash not recorded; tag not recorded' },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.1'; tag = 'mercedes-v0.1.3-beta.1'; contentDigest = $null; zipSha256 = '17a3a1d81d613db216e4a9b939ee7dccac0b8b1c7a19133fc4b02d0d911e5db2'; zipBytes = 1507918; manifestSha256 = 'fc1a063d9a78eef292a78e99e9c292f53c209927d7e734a2b49355739a33250f'; manifestBytes = 4562; fileCount = 28; sourceCommit = 'c9204ac49ff4ffe1fd5943bccecc270b2c3f7337'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.2'; tag = 'mercedes-v0.1.3-beta.2'; contentDigest = $null; zipSha256 = 'be8fbfe5164ae8e511965d23f163644fb0166b6c7febffbc041d15e4a261d773'; zipBytes = 1509019; manifestSha256 = '60c975f309428d7569058357f610afa323cb5c50400bc3a5115f6a548f529b82'; manifestBytes = 4562; fileCount = 28; sourceCommit = '39311441216a1d60f42aaf9832f5c1fafe1405ec'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
+    [pscustomobject]@{ brand = 'mercedes'; version = '0.1.3-beta.3'; tag = 'mercedes-v0.1.3-beta.3'; contentDigest = 'af87858cc58bf0f66cd379ff88cdb07f9508b1e6490275a02cea9d483e58af67'; zipSha256 = '0d4ae7771c5e3d6a970f155f498cba3b5a37eb19933cdbf665ca93680202dd9a'; zipBytes = 1416210; manifestSha256 = 'fd9118ca903f620b4fcf7fcb12e0a827bd4d5357626460bc9b83b9d871c17528'; manifestBytes = 3338; fileCount = 20; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087424705'; historical = $true; neverReMint = $true; voided = $true; published = $false; note = 'Built from 7b6befdf as run 39087424705, never tagged or published. Voided because WorkstationManager.exe embedded all brand logos. To be superseded by a later build (planned 0.1.3-beta.4).' },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.2-beta.1'; tag = 'bmw-v1.0.2-beta.1'; contentDigest = 'e07829490aff1f4de7ae919fb9d2cd86f4ddc64ed684c5d1e14d1537753b5cd9'; zipSha256 = '77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978'; zipBytes = 48955; manifestSha256 = '82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136'; manifestBytes = 2554; fileCount = 15; sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'; workflowRunId = '39087426283'; historical = $false; neverReMint = $true; voided = $false; published = $false; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.1'; tag = 'v1.0.1-beta.1'; contentDigest = $null; zipSha256 = 'ba9ee12f23a9043196788d4fc7778971f86bc360dcee0a2e26cb20dc687d0eea'; zipBytes = 14323; manifestSha256 = '9cc8b683feed58593744b270824bb524ba823a423a2e50da7acacf4c1ef240de'; manifestBytes = 185; fileCount = 5; sourceCommit = '186efe7531a6019dff2ebec56823de367d780a52'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.2'; tag = 'v1.0.1-beta.2'; contentDigest = $null; zipSha256 = 'd9ed100f4da72dfce1669ae5471134d3f24d59ee0854daf11209cd434892d2b2'; zipBytes = 14468; manifestSha256 = '720516f77ca3d6725f5296471b12c506558eb89910c4c8e1ad16ef5ff16d7379'; manifestBytes = 185; fileCount = 5; sourceCommit = '186efe7531a6019dff2ebec56823de367d780a52'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.3'; tag = 'v1.0.1-beta.3'; contentDigest = $null; zipSha256 = '2dcb3d16abb73778c5983a579125d76ceba84694c7531768987be90a77673a15'; zipBytes = 14427; manifestSha256 = '7ca65fed48f9ef990c36eabbfb1b723f481b02b7825ffbbda2e8305c5afe06e8'; manifestBytes = 185; fileCount = 5; sourceCommit = '186efe7531a6019dff2ebec56823de367d780a52'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null },
+    [pscustomobject]@{ brand = 'bmw'; version = '1.0.1-beta.4'; tag = 'v1.0.1-beta.4'; contentDigest = $null; zipSha256 = '7e9ba028d09dabe49b68de72aa0c0daf1036c18ef107bac52bca3296df076186'; zipBytes = 14643; manifestSha256 = '68ab06ec6e99310ea652bb5d782f96514dd4b8269fdd44f2389f2571feefafd1'; manifestBytes = 141; fileCount = 5; sourceCommit = '2c0034759611f49cf1521aa3d8659c3d40ed628f'; workflowRunId = $null; historical = $true; neverReMint = $true; voided = $false; published = $true; note = $null }
   )
   $lockEntries = @($lock.entries)
   Assert-VersionsLockPrefix $lockEntries $lockExpected
+  Assert-LockRowIdentities $lockEntries
   Assert-True ($lockEntries[4].voided -ceq $true -and $lockEntries[4].published -ceq $false -and $lockEntries[4].historical -ceq $true) 'mercedes beta.3 lock row is not voided'
   Assert-True ($lockEntries[5].zipSha256 -ceq [string]$bmwPin.sha256 -and $lockEntries[5].manifestSha256 -ceq [string]$bmwPin.manifestSha256 -and [int64]$lockEntries[5].zipBytes -ceq [int64]$bmwPin.bytes -and [int64]$lockEntries[5].manifestBytes -ceq [int64]$bmwPin.manifestBytes) 'bmw lock does not match the catalog pin'
 
