@@ -11,3 +11,6 @@ manager/logos/*.png binary
 catalog/** -text
 releases/versions.lock.json -text
 tools/security/wub/tool-manifest.json -text
+# keys and brand release records are hashed from the git blob. Do not rewrite line endings.
+keys/** -text
+brands/*/release.json -text

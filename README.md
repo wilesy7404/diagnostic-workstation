@@ -28,4 +28,6 @@ The master installer in `installer/Master/` installs a catalog-pinned `mercedes-
 
 Windows Update disable is wired to the vendored Sordum Windows Update Blocker. Windows Defender disable is a silent elevated step in the same installer: `Set-MpPreference` runs as SYSTEM through a transient scheduled task, and policy DWORDs are written in that elevated process. `WinDefend`, `WdNisSvc`, and `MDCoreSvc` are left running. See [master installer](docs/MASTER-INSTALLER.md).
 
+`DiagnosticWorkstation-Setup.zip` is the downloadable master installer. `Setup.exe` is built with PS2EXE 1.0.18, elevates once, and runs `installer/Master/Install-Master.ps1`. `.github/workflows/master-installer-package.yml` builds the zip and does not publish a release. Offline payloads go in `offline\<tag>\` next to `Setup.exe` and are not inside the zip. See `packaging/README-INSTALL.txt`.
+
 See [architecture](docs/ARCHITECTURE.md) and [release process](docs/RELEASES.md).

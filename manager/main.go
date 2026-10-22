@@ -340,6 +340,11 @@ func brandsMatching(all []brand, embedded string) []brand {
 }
 func selectInstall() {
 	b := selectedBrand()
+	title, err := installPromptTitle(b.DisplayName)
+	if err != nil || strings.TrimSpace(b.ID) == "" {
+		notify(unresolvedBrandTitle, unresolvedBrandMessage, MB_ICONERROR)
+		return
+	}
 	root := installationRoot()
 	if _, e := os.Stat(filepath.Join(root, "profile.json")); e == nil {
 		p, err := readProfile(root)
@@ -348,7 +353,7 @@ func selectInstall() {
 			return
 		}
 	}
-	if notify("Install "+b.DisplayName, "Install the "+b.DisplayName+" Diagnostic Workstation for the current Windows user?\n\nIncludes Home, glass dock, ADMIN, SYSTEM, startup option, and the shared universal updater.\n\nWindows Explorer stays available as a recovery desktop.\n\nNo OEM programs, keys, or licenses are included.", MB_YESNO|MB_ICONQUESTION) != IDYES {
+	if notify(title, "Install the "+b.DisplayName+" Diagnostic Workstation for the current Windows user?\n\nIncludes Home, glass dock, ADMIN, SYSTEM, startup option, and the shared universal updater.\n\nWindows Explorer stays available as a recovery desktop.\n\nNo OEM programs, keys, or licenses are included.", MB_YESNO|MB_ICONQUESTION) != IDYES {
 		return
 	}
 	startTask("install")
