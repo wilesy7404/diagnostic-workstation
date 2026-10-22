@@ -85,10 +85,9 @@ try {
 
   function Write-ZoneIdentifier {
     param([Parameter(Mandatory = $true)][string]$Root)
-    $payload = "[ZoneTransfer]`r`nZoneId=3`r`n"
     foreach ($rel in @(Get-PackageRelativeFiles $Root)) {
       $full = Join-PackageRelative $Root $rel
-      [System.IO.File]::WriteAllText(($full + ':Zone.Identifier'), $payload)
+      Set-Content -LiteralPath $full -Stream Zone.Identifier -Value @('[ZoneTransfer]', 'ZoneId=3') -Encoding Ascii
     }
   }
 
@@ -131,7 +130,7 @@ try {
     Write-InstallerExitStub (Join-PackageRelative $exit0Root 'installer/Master/Install-Master.ps1') 0
     Update-StagedSetupExe -StageRoot $exit0Root -Nupkg $nupkg
     Write-ZoneIdentifier $exit0Root
-    $marked = [System.IO.File]::ReadAllText(((Join-PackageRelative $exit11Root 'installer/Master/Install-Master.ps1') + ':Zone.Identifier'))
+    $marked = Get-Content -LiteralPath (Join-PackageRelative $exit11Root 'installer/Master/Install-Master.ps1') -Stream Zone.Identifier -Raw
     if ($marked -notmatch 'ZoneId=3') { throw 'Zone.Identifier was not applied' }
     $tamperRoot = Join-Path -Path $caseRoot -ChildPath 'tamper'
     Copy-VerifiedTree $extracted $tamperRoot
