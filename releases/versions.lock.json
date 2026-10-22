@@ -108,7 +108,12 @@
       "historical": false,
       "neverReMint": true,
       "voided": false,
-      "published": false,
+      "published": true,
+      "releaseId": 416761964,
+      "publishedAt": "2026-10-18T23:03:37Z",
+      "releaseTarget": "7b6befdfcb3d501a8b2f29b240adcb58df897fc5",
+      "workstationZipAssetId": 654691267,
+      "updateManifestAssetId": 654691268,
       "note": null
     },
     {
@@ -198,7 +203,12 @@
       "historical": false,
       "neverReMint": true,
       "voided": false,
-      "published": false,
+      "published": true,
+      "releaseId": 416761930,
+      "publishedAt": "2026-10-18T23:03:34Z",
+      "releaseTarget": "2b138bf07b0b083615a76a7c16da5e27f16b75e8",
+      "workstationZipAssetId": 654691137,
+      "updateManifestAssetId": 654691138,
       "note": "Pinned in catalog serial 3 from Actions run 39091982618. Not tagged and not published."
     }
   ]

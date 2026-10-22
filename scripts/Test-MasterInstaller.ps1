@@ -65,6 +65,97 @@ function Get-LockFieldKey($Row) {
   $names = @($Row.PSObject.Properties.Name)
   return ((@($names | Sort-Object)) -join "`n")
 }
+# A published:false row may become published:true and gain only these scalar fields.
+# Hashes, version, tag, sourceCommit, workflowRunId, and every other existing field stay fixed.
+$script:PublishRecordFieldNames = @(
+  'releaseId',
+  'publishedAt',
+  'releaseTarget',
+  'workstationZipAssetId',
+  'updateManifestAssetId'
+)
+function Test-PublishRecordName([string]$Name) {
+  foreach ($candidate in @($script:PublishRecordFieldNames)) {
+    if ($candidate -ceq $Name) { return $true }
+  }
+  return $false
+}
+function Test-LockNameListed($Names, [string]$Name) {
+  foreach ($candidate in @($Names)) {
+    if ([string]$candidate -ceq $Name) { return $true }
+  }
+  return $false
+}
+function Assert-LockWholeNumber($Value, [string]$Label) {
+  if (-not (Test-LockNumber $Value)) { throw "$Label type mismatch" }
+  $asDecimal = [decimal]$Value
+  if ($asDecimal -ne [decimal]::Truncate($asDecimal)) { throw "$Label type mismatch" }
+  if ($asDecimal -le 0) { throw "$Label type mismatch" }
+}
+function Get-PublishTimestampUtc($Value) {
+  # PowerShell 7 ConvertFrom-Json turns a Z timestamp into a UTC DateTime.
+  # Windows PowerShell 5.1 leaves the same JSON value as a string.
+  if ($Value -is [string]) {
+    if ($Value -cnotmatch '\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z') { return $null }
+    return [datetime]::ParseExact($Value, 'yyyy-MM-ddTHH:mm:ssZ', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+  }
+  if ($Value -is [datetime]) {
+    if ($Value.Kind -ne [System.DateTimeKind]::Utc) { return $null }
+    if ($Value.Millisecond -ne 0) { return $null }
+    return $Value.ToUniversalTime()
+  }
+  return $null
+}
+function Test-PublishTimestampEqual($Actual, [string]$Expected) {
+  $actualUtc = Get-PublishTimestampUtc $Actual
+  $expectedUtc = Get-PublishTimestampUtc $Expected
+  if ($null -eq $actualUtc -or $null -eq $expectedUtc) { return $false }
+  return ($actualUtc -eq $expectedUtc)
+}
+function Assert-PublishRecordValues($Row, [int]$Index) {
+  Assert-LockWholeNumber $Row.releaseId "versions.lock[$Index].releaseId"
+  if ($null -eq (Get-PublishTimestampUtc $Row.publishedAt)) {
+    throw "versions.lock[$Index].publishedAt type mismatch"
+  }
+  $target = $Row.releaseTarget
+  if ($target -isnot [string] -or $target -cnotmatch '\A[0-9a-f]{40}\z') {
+    throw "versions.lock[$Index].releaseTarget must be 40 lowercase hex characters"
+  }
+  Assert-LockWholeNumber $Row.workstationZipAssetId "versions.lock[$Index].workstationZipAssetId"
+  Assert-LockWholeNumber $Row.updateManifestAssetId "versions.lock[$Index].updateManifestAssetId"
+}
+function Select-LockCoreRow($Row) {
+  $copy = [ordered]@{}
+  foreach ($prop in @($Row.PSObject.Properties)) {
+    if (-not (Test-PublishRecordName ([string]$prop.Name))) {
+      $copy[$prop.Name] = $prop.Value
+    }
+  }
+  return [pscustomobject]$copy
+}
+function Copy-LockRow($Row) {
+  $copy = [ordered]@{}
+  foreach ($prop in @($Row.PSObject.Properties)) {
+    $copy[$prop.Name] = $prop.Value
+  }
+  return [pscustomobject]$copy
+}
+function Add-LockPublishRecord($Row) {
+  $copy = [ordered]@{}
+  foreach ($prop in @($Row.PSObject.Properties)) {
+    if ($prop.Name -ceq 'published') {
+      $copy['published'] = $true
+      $copy['releaseId'] = 416761964
+      $copy['publishedAt'] = '2026-10-18T23:03:37Z'
+      $copy['releaseTarget'] = ('e' * 40)
+      $copy['workstationZipAssetId'] = 654691267
+      $copy['updateManifestAssetId'] = 654691268
+    } else {
+      $copy[$prop.Name] = $prop.Value
+    }
+  }
+  return [pscustomobject]$copy
+}
 function Assert-VersionsLockPrefix($ActualEntries, $ExpectedEntries) {
   $actual = @($ActualEntries)
   $expected = @($ExpectedEntries)
@@ -72,11 +163,6 @@ function Assert-VersionsLockPrefix($ActualEntries, $ExpectedEntries) {
     throw 'versions lock dropped or reordered an entry'
   }
   for ($i = 0; $i -lt $expected.Count; $i++) {
-    $actualKey = Get-LockFieldKey $actual[$i]
-    $expectedKey = Get-LockFieldKey $expected[$i]
-    if ($actualKey -cne $expectedKey) {
-      throw "versions.lock[$i] fields changed"
-    }
     $actualBrand = [string]$actual[$i].brand
     $expectedBrand = [string]$expected[$i].brand
     $actualVersion = [string]$actual[$i].version
@@ -84,9 +170,44 @@ function Assert-VersionsLockPrefix($ActualEntries, $ExpectedEntries) {
     if ($actualBrand -cne $expectedBrand -or $actualVersion -cne $expectedVersion) {
       throw "versions.lock[$i] was reordered or replaced"
     }
-    foreach ($field in @($expected[$i].PSObject.Properties.Name)) {
+    $expectedNames = @($expected[$i].PSObject.Properties.Name)
+    $actualNames = @($actual[$i].PSObject.Properties.Name)
+    foreach ($name in $expectedNames) {
+      if (-not (Test-LockNameListed $actualNames $name)) {
+        throw "versions.lock[$i] fields changed"
+      }
+    }
+    $extra = New-Object System.Collections.Generic.List[string]
+    foreach ($name in $actualNames) {
+      if (-not (Test-LockNameListed $expectedNames $name)) {
+        $extra.Add([string]$name)
+      }
+    }
+    $expectedPublished = $expected[$i].published
+    $actualPublished = $actual[$i].published
+    $publishTransition = $false
+    if (($expectedPublished -is [bool]) -and ($expectedPublished -eq $false) -and ($actualPublished -is [bool]) -and ($actualPublished -eq $true)) {
+      $publishTransition = $true
+    }
+    if ($extra.Count -gt 0) {
+      if (-not $publishTransition) { throw "versions.lock[$i] fields changed" }
+      if ($extra.Count -ne @($script:PublishRecordFieldNames).Count) {
+        throw "versions.lock[$i] fields changed"
+      }
+      foreach ($name in @($extra)) {
+        if (-not (Test-PublishRecordName $name)) { throw "versions.lock[$i] fields changed" }
+      }
+      foreach ($name in @($script:PublishRecordFieldNames)) {
+        if (-not (Test-LockNameListed $extra $name)) { throw "versions.lock[$i] publish record is incomplete" }
+      }
+    } elseif ($publishTransition) {
+      throw "versions.lock[$i] publish record is incomplete"
+    }
+    foreach ($field in $expectedNames) {
+      if ($publishTransition -and ($field -ceq 'published')) { continue }
       Assert-SameLockValue $actual[$i].$field $expected[$i].$field "versions.lock[$i].$field"
     }
+    if ($publishTransition) { Assert-PublishRecordValues $actual[$i] $i }
   }
 }
 function New-SampleLockRow($Brand, $Version, $Tag, $Published, $Voided, $ZipBytes) {
@@ -1150,7 +1271,56 @@ try {
   $missingRow.PSObject.Properties.Remove('note')
   Assert-Throws { Assert-NewLockRow $missingRow 0 $newKey } 'fields changed'
 
+  # published may flip only from false to true, and only together with the publish-record fields.
+  # A hash edit on that same change is still rejected.
+  $publishBase = New-SampleLockRow 'bmw' '1.0.2-beta.1' 'bmw-v1.0.2-beta.1' $false $false 48955
+  $publishBase.sourceCommit = '7b6befdfcb3d501a8b2f29b240adcb58df897fc5'
+  $publishBase.workflowRunId = '39087426283'
+  $publishedRow = Add-LockPublishRecord $publishBase
+  Assert-VersionsLockPrefix @($publishedRow) @($publishBase)
+  $hashEdited = Copy-LockRow $publishedRow
+  $hashEdited.zipSha256 = ('f' * 64)
+  Assert-Throws { Assert-VersionsLockPrefix @($hashEdited) @($publishBase) } 'zipSha256 changed'
+  $digestEdited = Copy-LockRow $publishedRow
+  $digestEdited.contentDigest = ('9' * 64)
+  Assert-Throws { Assert-VersionsLockPrefix @($digestEdited) @($publishBase) } 'contentDigest changed'
+  $manifestEdited = Copy-LockRow $publishedRow
+  $manifestEdited.manifestSha256 = ('8' * 64)
+  Assert-Throws { Assert-VersionsLockPrefix @($manifestEdited) @($publishBase) } 'manifestSha256 changed'
+  $commitEdited = Copy-LockRow $publishedRow
+  $commitEdited.sourceCommit = ('a' * 40)
+  Assert-Throws { Assert-VersionsLockPrefix @($commitEdited) @($publishBase) } 'sourceCommit changed'
+  $runEdited = Copy-LockRow $publishedRow
+  $runEdited.workflowRunId = '1'
+  Assert-Throws { Assert-VersionsLockPrefix @($runEdited) @($publishBase) } 'workflowRunId changed'
+  $tagEdited = Copy-LockRow $publishedRow
+  $tagEdited.tag = 'bmw-v9.9.9'
+  Assert-Throws { Assert-VersionsLockPrefix @($tagEdited) @($publishBase) } 'tag changed'
+  $noteEdited = Copy-LockRow $publishedRow
+  $noteEdited.note = 'changed'
+  Assert-Throws { Assert-VersionsLockPrefix @($noteEdited) @($publishBase) } 'note changed'
+  $lockedPublish = Copy-LockRow $publishedRow
+  $undonePublish = Copy-LockRow $publishedRow
+  $undonePublish.published = $false
+  Assert-Throws { Assert-VersionsLockPrefix @($undonePublish) @($lockedPublish) } 'published changed'
+  $hashAfterLock = Copy-LockRow $lockedPublish
+  $hashAfterLock.zipSha256 = ('f' * 64)
+  Assert-Throws { Assert-VersionsLockPrefix @($hashAfterLock) @($lockedPublish) } 'zipSha256 changed'
+  $unknownPublish = Copy-LockRow $publishedRow
+  $unknownPublish | Add-Member -NotePropertyName extra -NotePropertyValue 1
+  Assert-Throws { Assert-VersionsLockPrefix @($unknownPublish) @($publishBase) } 'fields changed'
+  $barePublish = Copy-LockRow $publishBase
+  $barePublish.published = $true
+  Assert-Throws { Assert-VersionsLockPrefix @($barePublish) @($publishBase) } 'publish record is incomplete'
+  $nullPublishBase = Copy-LockRow $publishBase
+  $nullPublishBase.published = $null
+  Assert-Throws { Assert-VersionsLockPrefix @(Add-LockPublishRecord $nullPublishBase) @($nullPublishBase) } 'fields changed'
+  $badTarget = Copy-LockRow $publishedRow
+  $badTarget.releaseTarget = ('E' * 40)
+  Assert-Throws { Assert-VersionsLockPrefix @($badTarget) @($publishBase) } 'releaseTarget must be 40 lowercase hex'
+
   # Existing rows are compared to the base branch. A pull request cannot edit that baseline.
+  # The only in-place edit is published false to true, plus the publish-record fields.
   # Local runs that are not pull requests fall back to the copy below. New rows after the baseline
   # must use the brand prefix plus the version, such as bmw-v1.0.3-beta.1.
   # contentDigest, zipSha256, and manifestSha256 must be 64 lowercase hex characters.
@@ -1197,10 +1367,15 @@ try {
     }
   }
   Assert-True ($null -ne $beta4Lock) 'mercedes beta.4 lock row is missing'
-  Assert-NewLockRow $beta4Lock $beta4Index $appendedFieldKey
+  Assert-NewLockRow (Select-LockCoreRow $beta4Lock) $beta4Index $appendedFieldKey
+  Assert-PublishRecordValues $beta4Lock $beta4Index
   Assert-True ([string]$beta4Lock.tag -ceq 'mercedes-v0.1.3-beta.4' -and [string]$beta4Lock.workflowRunId -ceq '39091982618' -and [string]$beta4Lock.zipSha256 -ceq [string]$mercedesPin.sha256 -and [string]$beta4Lock.manifestSha256 -ceq [string]$mercedesPin.manifestSha256) 'mercedes beta.4 lock row does not match the catalog pin'
+  Assert-True ($beta4Lock.published -ceq $true -and [int64]$beta4Lock.releaseId -eq 416761930 -and (Test-PublishTimestampEqual $beta4Lock.publishedAt '2026-10-18T23:03:34Z') -and [string]$beta4Lock.releaseTarget -ceq '2b138bf07b0b083615a76a7c16da5e27f16b75e8' -and [int64]$beta4Lock.workstationZipAssetId -eq 654691137 -and [int64]$beta4Lock.updateManifestAssetId -eq 654691138) 'mercedes beta.4 publish record is wrong'
+  Assert-True ([string]$beta4Lock.sourceCommit -ceq '2b138bf07b0b083615a76a7c16da5e27f16b75e8' -and [string]$beta4Lock.note -ceq 'Pinned in catalog serial 3 from Actions run 39091982618. Not tagged and not published.') 'mercedes beta.4 identity fields were rewritten'
   Assert-True ($lockEntries[4].voided -ceq $true -and $lockEntries[4].published -ceq $false -and $lockEntries[4].historical -ceq $true) 'mercedes beta.3 lock row is not voided'
   Assert-True ($lockEntries[5].zipSha256 -ceq [string]$bmwPin.sha256 -and $lockEntries[5].manifestSha256 -ceq [string]$bmwPin.manifestSha256 -and [int64]$lockEntries[5].zipBytes -ceq [int64]$bmwPin.bytes -and [int64]$lockEntries[5].manifestBytes -ceq [int64]$bmwPin.manifestBytes) 'bmw lock does not match the catalog pin'
+  Assert-PublishRecordValues $lockEntries[5] 5
+  Assert-True ($lockEntries[5].published -ceq $true -and [string]$lockEntries[5].version -ceq '1.0.2-beta.1' -and [string]$lockEntries[5].tag -ceq 'bmw-v1.0.2-beta.1' -and [string]$lockEntries[5].sourceCommit -ceq '7b6befdfcb3d501a8b2f29b240adcb58df897fc5' -and [string]$lockEntries[5].workflowRunId -ceq '39087426283' -and [int64]$lockEntries[5].releaseId -eq 416761964 -and (Test-PublishTimestampEqual $lockEntries[5].publishedAt '2026-10-18T23:03:37Z') -and [string]$lockEntries[5].releaseTarget -ceq '7b6befdfcb3d501a8b2f29b240adcb58df897fc5' -and [int64]$lockEntries[5].workstationZipAssetId -eq 654691267 -and [int64]$lockEntries[5].updateManifestAssetId -eq 654691268 -and $null -eq $lockEntries[5].note) 'bmw publish record is wrong'
 
   Write-Output 'Master installer checks passed.'
 } catch {
