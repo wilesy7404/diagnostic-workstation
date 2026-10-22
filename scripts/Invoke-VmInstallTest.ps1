@@ -13,6 +13,23 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'VmInstallVerdict.ps1')
+# The workflow commit is the harness checkout. catalog_ref is the catalog checkout.
+# Copy this commit's installer onto the catalog checkout so the run uses the harness
+# installer and the catalog_ref catalog together. A single-checkout run is unchanged.
+$script:HarnessRepo = Split-Path -Parent $PSScriptRoot
+$harnessMaster = Join-Path $script:HarnessRepo 'installer\Master'
+$catalogMaster = Join-Path $RepoRoot 'installer\Master'
+if ((Test-Path -LiteralPath $harnessMaster) -and (Test-Path -LiteralPath (Join-Path $harnessMaster 'Install-Master.ps1'))) {
+  $harnessFull = [System.IO.Path]::GetFullPath($harnessMaster)
+  $catalogFull = [System.IO.Path]::GetFullPath($catalogMaster)
+  if ($harnessFull -ne $catalogFull) {
+    if (Test-Path -LiteralPath $catalogMaster) { Remove-Item -LiteralPath $catalogMaster -Recurse -Force }
+    $catalogParent = Split-Path -Parent $catalogMaster
+    if (-not (Test-Path -LiteralPath $catalogParent)) { New-Item -ItemType Directory -Force -Path $catalogParent | Out-Null }
+    Copy-Item -LiteralPath $harnessMaster -Destination $catalogMaster -Recurse -Force
+  }
+}
 if ($PSVersionTable.PSVersion.Major -ne 5) {
   throw 'Invoke-VmInstallTest.ps1 must run on Windows PowerShell 5.1 (powershell.exe), not pwsh.'
 }
@@ -38,16 +55,6 @@ function Add-Check([string]$Brand, [string]$Id, [string]$Status, [string]$Detail
     Detail = $Detail
   }
   Write-Output ("{0} {1} {2}: {3}" -f $Status, $Brand, $Id, $Detail)
-}
-
-function Get-CombinedStatus($Parts) {
-  foreach ($part in @($Parts)) {
-    if ($part.Status -eq 'FAIL') { return 'FAIL' }
-  }
-  foreach ($part in @($Parts)) {
-    if ($part.Status -eq 'NOT PROVEN') { return 'NOT PROVEN' }
-  }
-  return 'PASS'
 }
 
 function Format-PartDetail($Parts) {
@@ -317,8 +324,9 @@ function Read-InstallerOutput([string]$LogStem) {
   return (($text -replace '\s+', ' ').Trim())
 }
 
-function Invoke-BrandInstall([string]$BrandId, [string]$TagName, [string]$SourcePath, [string]$LogStem) {
+function Invoke-BrandInstall([string]$BrandId, [string]$TagName, [string]$SourcePath, [string]$LogStem, [switch]$AllowHarnessFailSwap) {
   $installArgs = @('-Brand', $BrandId, '-Channel', 'beta', '-Tag', $TagName, '-Source', $SourcePath, '-OfflineOnly')
+  if ($AllowHarnessFailSwap) { $installArgs += '-AllowHarnessFailSwap' }
   $code = Invoke-NativePowerShell -File (Join-Path $RepoRoot 'installer\Master\Install-Master.ps1') -Arguments $installArgs -LogStem $LogStem -TimeoutMs $script:InstallTimeoutMs
   return [pscustomobject]@{ Code = $code; Text = (Read-InstallerOutput $LogStem) }
 }
@@ -383,6 +391,140 @@ function Add-WrongTargetCheck([string]$BrandId, [string]$TagName, [string]$Sourc
   }
   Remove-InstallProgress
   Clear-BrandTree $Root
+}
+
+function Write-HarnessLockFile([string]$Path, [int]$OwnerPid, [string]$OwnerStartUtc, [string]$Nonce, [string]$CreatedUtc) {
+  $record = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $OwnerPid
+    ownerStartUtc = $OwnerStartUtc
+    nonce = $Nonce
+    createdUtc = $CreatedUtc
+  }
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, (($record | ConvertTo-Json -Compress) + "`n"), $utf8)
+}
+
+function Write-SameBrandTree([string]$Root, [string]$BrandId, [string]$TagName, [string]$Version) {
+  New-Item -ItemType Directory -Force -Path $Root | Out-Null
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  $markerText = '{"schema":"diagnostic-workstation.installed-bundle/v1","brand":"' + $BrandId + '","tag":"' + $TagName + '","version":"' + $Version + '"}' + "`n"
+  [System.IO.File]::WriteAllText((Join-Path $Root '.installed-bundle.json'), $markerText, $utf8)
+  [System.IO.File]::WriteAllText((Join-Path $Root 'Launcher.ps1'), "Write-Output 'held-tree'`n", $utf8)
+}
+
+function Add-LiveLockCheck([string]$BrandId, [string]$TagName, [string]$Version, [string]$SourcePath, [string]$Root) {
+  Remove-InstallProgress
+  Clear-BrandTree $Root
+  $owner = $null
+  try {
+    Write-SameBrandTree $Root $BrandId $TagName $Version
+    $owner = Start-Process -FilePath $script:PowershellExe -ArgumentList @('-NoProfile', '-WindowStyle', 'Hidden', '-Command', 'Start-Sleep -Seconds 3600') -WindowStyle Hidden -PassThru
+    if ($null -eq $owner) { throw 'live lock owner did not start' }
+    $startText = ''
+    try { $startText = $owner.StartTime.ToUniversalTime().ToString('o') } catch { $startText = '' }
+    $lockPath = Join-Path $Root 'install-in-progress.lock'
+    Write-HarnessLockFile $lockPath ([int]$owner.Id) $startText ('ab' * 16) ([datetimeoffset]::UtcNow.ToString('o'))
+    $beforeLock = Get-HexSha256 $lockPath
+    $beforeTree = Get-TreeFingerprint $Root
+    $logStem = Join-Path $ReportDir ($BrandId + '-live-lock')
+    $result = Invoke-BrandInstall $BrandId $TagName $SourcePath $logStem
+    $afterTree = Get-TreeFingerprint $Root
+    $residue = Get-InstallResidue $Root
+    $lockSame = $false
+    if (Test-Path -LiteralPath $lockPath) { $lockSame = (Get-HexSha256 $lockPath) -ceq $beforeLock }
+    $unchanged = ($beforeTree -ceq $afterTree) -and ($beforeTree -ne 'MISSING')
+    $clean = [string]::IsNullOrEmpty($residue)
+    $expected = 'already holds install-in-progress.lock'
+    if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch $expected -or -not $lockSame -or -not $unchanged -or -not $clean) {
+      Add-Check $BrandId 'live-lock' 'FAIL' ("live lock exit {0} lockSame={1} unchanged={2} residue='{3}'. expected '{4}'. {5}" -f $result.Code, $lockSame, $unchanged, $residue, $expected, $result.Text)
+    } else {
+      Add-Check $BrandId 'live-lock' 'PASS' ("a same-brand install refused a live install-in-progress.lock with '{0}' and exit {1}. The tree and lock stayed byte-identical, and no residue was left." -f $expected, $result.Code)
+    }
+  } catch {
+    Add-Check $BrandId 'live-lock' 'FAIL' $_.Exception.Message
+  } finally {
+    if ($owner -and -not $owner.HasExited) {
+      try { Stop-Process -Id $owner.Id -Force -ErrorAction SilentlyContinue } catch { }
+    }
+    Remove-InstallProgress
+    Clear-BrandTree $Root
+  }
+}
+
+function Add-StaleLockCheck([string]$BrandId, [string]$TagName, [string]$SourcePath, [string]$Root) {
+  Remove-InstallProgress
+  Clear-BrandTree $Root
+  try {
+    New-Item -ItemType Directory -Force -Path $Root | Out-Null
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText((Join-Path $Root 'Launcher.ps1'), "Write-Output 'stale-tree'`n", $utf8)
+    $lockPath = Join-Path $Root 'install-in-progress.lock'
+    Write-HarnessLockFile $lockPath 2147483646 '2020-01-01T00:00:00.0000000Z' ('ef' * 16) ([datetimeoffset]::UtcNow.ToString('o'))
+    $journalAt = Get-JournalCount
+    $logStem = Join-Path $ReportDir ($BrandId + '-stale-lock')
+    $result = Invoke-BrandInstall $BrandId $TagName $SourcePath $logStem
+    $events = @(Read-NewJournal $journalAt)
+    $reclaimed = $false
+    foreach ($event in $events) {
+      if ([string]$event.step -eq 'install-lock-reclaimed' -and [string]$event.reason -eq 'dead-pid') { $reclaimed = $true }
+    }
+    $staleGone = -not (Test-Path -LiteralPath $lockPath)
+    if ($result.Code -eq -1 -or -not $reclaimed -or -not $staleGone) {
+      Add-Check $BrandId 'stale-lock' 'FAIL' ("stale lock exit {0} reclaimed={1} lockGone={2}. expected journal install-lock-reclaimed reason dead-pid." -f $result.Code, $reclaimed, $staleGone)
+    } else {
+      Add-Check $BrandId 'stale-lock' 'PASS' ("a dead-pid install-in-progress.lock was reclaimed (journal install-lock-reclaimed reason dead-pid) and the stale lock was not left in place. exit {0}" -f $result.Code)
+    }
+  } catch {
+    Add-Check $BrandId 'stale-lock' 'FAIL' $_.Exception.Message
+  } finally {
+    Remove-InstallProgress
+    Clear-BrandTree $Root
+  }
+}
+
+function Remove-FailSwapArm {
+  $pointer = Join-Path $script:InstallerData 'fail-swap.location'
+  $marker = Join-Path $ReportDir 'fail-swap.marker'
+  if (Test-Path -LiteralPath $pointer) { Remove-Item -LiteralPath $pointer -Force }
+  if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force }
+}
+
+function Add-InInstallFailureCheck([string]$BrandId, [string]$TagName, [string]$SourcePath, [string]$Root) {
+  $installedMarker = Join-Path $Root '.installed-bundle.json'
+  if (-not (Test-Path -LiteralPath $installedMarker)) {
+    Add-Check $BrandId 'in-install-failure' 'FAIL' 'fresh install has no marker, so the in-install failure was not run'
+    Remove-FailSwapArm
+    return
+  }
+  try {
+    $beforeTree = Get-TreeFingerprint $Root
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $arm = Join-Path $ReportDir 'fail-swap.marker'
+    [System.IO.File]::WriteAllText($arm, "diagnostic-workstation-test-fail-swap`n", $utf8)
+    $pointer = Join-Path $script:InstallerData 'fail-swap.location'
+    [System.IO.File]::WriteAllText($pointer, ($arm + "`n"), $utf8)
+    $logStem = Join-Path $ReportDir ($BrandId + '-in-install-failure')
+    $result = Invoke-BrandInstall $BrandId $TagName $SourcePath $logStem -AllowHarnessFailSwap
+    $afterTree = Get-TreeFingerprint $Root
+    $residue = Get-InstallResidue $Root
+    $lockPath = Join-Path $Root 'install-in-progress.lock'
+    $lockReleased = -not (Test-Path -LiteralPath $lockPath)
+    $sameTree = ($beforeTree -ceq $afterTree) -and ($beforeTree -ne 'MISSING')
+    $clean = [string]::IsNullOrEmpty($residue)
+    $expectedRestore = 'previous folder was restored'
+    $expectedCause = 'test-only failure during install swap'
+    if ($result.Code -eq 0 -or $result.Code -eq -1 -or $result.Text -notmatch $expectedRestore -or $result.Text -notmatch $expectedCause -or -not $sameTree -or -not $clean -or -not $lockReleased) {
+      Add-Check $BrandId 'in-install-failure' 'FAIL' ("in-install failure exit {0} sameTree={1} residue='{2}' lockReleased={3}. expected '{4}'. {5}" -f $result.Code, $sameTree, $residue, $lockReleased, $expectedRestore, $result.Text)
+    } else {
+      Add-Check $BrandId 'in-install-failure' 'PASS' ("an armed fail-swap.marker failed the swap, restored the previous tree byte for byte, left no residue, and released install-in-progress.lock. exit {0}" -f $result.Code)
+    }
+  } catch {
+    Add-Check $BrandId 'in-install-failure' 'FAIL' $_.Exception.Message
+  } finally {
+    Remove-FailSwapArm
+    Remove-InstallProgress
+  }
 }
 
 function Add-ExtraFilesCheck([string]$BrandId, [string]$Root, $Manifest) {
@@ -575,14 +717,29 @@ function Get-BrandReleases($Catalog, [string]$Brand) {
   }
 }
 
-function Get-PlaceholderValue([string]$Token, [string]$Expression) {
+function Get-PlaceholderValue([string]$Token, [string]$Expression, [string]$Accent, [string]$AccentSoft) {
   $color = [regex]::Match([string]$Expression, '[''"](?<color>#[0-9A-Fa-f]{8}|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3})[''"]')
   if ($color.Success) { return [string]$color.Groups['color'].Value }
-  if ($Token -match '(?i)ACCENT|BRUSH|COLOR|FOREGROUND|BACKGROUND') { return '#FF00A0E0' }
+  if ([string]::IsNullOrWhiteSpace($Accent)) { $Accent = '#BBC7D0' }
+  if ([string]::IsNullOrWhiteSpace($AccentSoft)) { $AccentSoft = '#E6ECEF' }
+  if ($Token -match '(?i)ACCENT_SOFT') { return $AccentSoft }
+  if ($Token -match '(?i)ACCENT') { return $Accent }
+  if ($Token -match '(?i)BRUSH|COLOR|FOREGROUND|BACKGROUND') { return $Accent }
   return 'Placeholder'
 }
 
-function Get-PreparedXaml([string]$Path) {
+function Get-HereStringVariable([string]$Text, $Token) {
+  $start = [int]$Token.Extent.StartOffset
+  if ($start -le 0) { return $null }
+  $from = $start - 240
+  if ($from -lt 0) { $from = 0 }
+  $prefix = $Text.Substring($from, $start - $from)
+  $match = [regex]::Match($prefix, '(?s)(?:\[[A-Za-z][A-Za-z0-9\.]*\]\s*)?\$(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*$')
+  if (-not $match.Success) { return $null }
+  return [string]$match.Groups['name'].Value
+}
+
+function Get-PreparedXaml([string]$Path, [string]$Accent, [string]$AccentSoft) {
   $text = [System.IO.File]::ReadAllText($Path)
   $tokens = $null
   $parseErrors = $null
@@ -593,28 +750,48 @@ function Get-PreparedXaml([string]$Path) {
     if ($kind -ne 'HereStringLiteral' -and $kind -ne 'HereStringExpandable') { continue }
     $raw = [string]$token.Text
     if ($raw -notmatch 'schemas\.microsoft\.com/winfx/2006/xaml/presentation') { continue }
+    $varName = Get-HereStringVariable $text $token
+    if ([string]::IsNullOrWhiteSpace($varName)) { continue }
     $lines = @([regex]::Split($raw, "\r?\n"))
     if ($lines.Count -lt 3) { continue }
     $inner = New-Object System.Collections.Generic.List[string]
     for ($n = 1; $n -lt ($lines.Count - 1); $n++) { $inner.Add($lines[$n]) | Out-Null }
-    $region = ''
     $end = [int]$token.Extent.EndOffset
-    if ($end -ge 0 -and $end -lt $text.Length) {
-      $rest = $text.Substring($end)
-      $load = [regex]::Match($rest, 'XamlReader\]::(Load|Parse)')
-      if ($load.Success) { $region = $rest.Substring(0, $load.Index) }
+    if ($end -lt 0 -or $end -ge $text.Length) { continue }
+    $rest = $text.Substring($end)
+    $loadAt = -1
+    $cursor = 0
+    $needle = 'XamlReader\]::(?:Load|Parse)\('
+    while ($cursor -lt $rest.Length) {
+      $found = [regex]::Match($rest.Substring($cursor), $needle)
+      if (-not $found.Success) { break }
+      $at = $cursor + $found.Index
+      $take = 500
+      if (($rest.Length - $at) -lt $take) { $take = $rest.Length - $at }
+      $window = $rest.Substring($at, $take)
+      if ($window -match ('\$' + [regex]::Escape($varName) + '\b')) {
+        $loadAt = $at
+        break
+      }
+      $cursor = $at + $found.Length
     }
+    if ($loadAt -lt 0) { continue }
+    $region = $rest.Substring(0, $loadAt)
     $subs = @()
     $seen = @{}
-    $replaceCalls = [regex]::Matches($region, '\.Replace\(\s*([''"])(?<name>[^''"]+)\1\s*,\s*(?<expr>[^)]*)\)')
-    foreach ($call in @($replaceCalls)) {
-      $tokenName = [string]$call.Groups['name'].Value
-      if ([string]::IsNullOrWhiteSpace($tokenName)) { continue }
-      if ($seen.ContainsKey($tokenName)) { continue }
-      $seen[$tokenName] = $true
-      $subs += [pscustomobject]@{
-        Token = $tokenName
-        Value = (Get-PlaceholderValue $tokenName ([string]$call.Groups['expr'].Value))
+    $receiver = '\$' + [regex]::Escape($varName) + '\.Replace\('
+    foreach ($line in @([regex]::Split($region, "\r?\n"))) {
+      if ($line -notmatch $receiver) { continue }
+      $replaceCalls = [regex]::Matches($line, '\.Replace\(\s*([''"])(?<name>[^''"]+)\1\s*,\s*(?<expr>[^)]*)\)')
+      foreach ($call in @($replaceCalls)) {
+        $tokenName = [string]$call.Groups['name'].Value
+        if ([string]::IsNullOrWhiteSpace($tokenName)) { continue }
+        if ($seen.ContainsKey($tokenName)) { continue }
+        $seen[$tokenName] = $true
+        $subs += [pscustomobject]@{
+          Token = $tokenName
+          Value = (Get-PlaceholderValue $tokenName ([string]$call.Groups['expr'].Value) $Accent $AccentSoft)
+        }
       }
     }
     $ordered = @($subs | Sort-Object -Property @{ Expression = { $_.Token.Length }; Descending = $true })
@@ -639,6 +816,16 @@ function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
   $apartment = [string][System.Threading.Thread]::CurrentThread.ApartmentState
   $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('vm-bundle-' + [guid]::NewGuid().ToString('n'))
   New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+  $accent = '#BBC7D0'
+  $accentSoft = '#E6ECEF'
+  try {
+    $profileBytes = Read-ZipEntryBytes $ZipPath 'profile.json'
+    $profileText = [System.Text.Encoding]::UTF8.GetString($profileBytes)
+    if ($profileText.Length -gt 0 -and [int][char]$profileText[0] -eq 0xFEFF) { $profileText = $profileText.Substring(1) }
+    $profile = $profileText | ConvertFrom-Json
+    if ($profile.accent) { $accent = [string]$profile.accent }
+    if ($profile.accentSoft) { $accentSoft = [string]$profile.accentSoft }
+  } catch { }
   try {
     foreach ($entry in @($zip.Entries)) {
       $name = [string]$entry.FullName
@@ -657,7 +844,7 @@ function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
       if (@($errors).Count -gt 0) {
         $parseProblems.Add(('{0}: {1}' -f $name, [string]@($errors)[0].Message)) | Out-Null
       }
-      $prepared = @(Get-PreparedXaml $temp)
+      $prepared = @(Get-PreparedXaml $temp $accent $accentSoft)
       if ($prepared.Count -gt 0) { $xamlFiles.Add($name) | Out-Null }
       $noteParts = @()
       $noteSeen = @{}
@@ -707,6 +894,20 @@ function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
   }
 }
 
+function Get-GitHeadSha([string]$Directory) {
+  if ([string]::IsNullOrWhiteSpace($Directory) -or -not (Test-Path -LiteralPath $Directory)) { return 'unknown' }
+  $output = ''
+  try {
+    $output = (& git -C $Directory rev-parse HEAD 2>&1 | Out-String)
+  } catch {
+    return 'unknown'
+  }
+  if ($LASTEXITCODE -ne 0) { return 'unknown' }
+  $sha = ([string]$output).Trim()
+  if ($sha -notmatch '^[0-9a-fA-F]{40}$') { return 'unknown' }
+  return $sha
+}
+
 function Add-DpiCheck {
   Add-Check 'host' 'dpi-awareness' 'NOT PROVEN' 'DPI awareness is not asserted. This harness does not start the launcher process, so a reading from the harness process, including awareness 0, is not evidence.'
   Add-Check 'host' 'dpi-multimonitor' 'NOT PROVEN' 'DPI and multi-monitor layout are not proven on a headless hosted runner. This run does not change session scaling.'
@@ -727,6 +928,9 @@ function Write-VmInstallReport {
     }
     $resultWord = 'PASS'
     if ($failCount -gt 0 -or $script:HarnessFault) { $resultWord = 'FAIL' }
+    elseif ($notRunCount -gt 0 -or $unprovenCount -gt 0) {
+      $resultWord = "PASS with gaps ($notRunCount NOT RUN, $unprovenCount NOT PROVEN)"
+    }
     $lines = @()
     $lines += '# VM install test report'
     $lines += ''
@@ -735,10 +939,12 @@ function Write-VmInstallReport {
     $lines += ('Windows PowerShell {0}' -f $PSVersionTable.PSVersion.ToString())
     $lines += ('Computer: {0}' -f $env:COMPUTERNAME)
     $lines += ('Catalog ref: {0}' -f $CatalogRef)
+    $lines += ('Harness SHA: {0}' -f (Get-GitHeadSha $script:HarnessRepo))
+    $lines += ('Catalog SHA: {0}' -f (Get-GitHeadSha $RepoRoot))
     $lines += ('Mercedes artifact run: {0}' -f $MercedesRunId)
     $lines += ('BMW artifact run: {0}' -f $BmwRunId)
     $lines += ''
-    $lines += 'NOT PROVEN is not a pass. NOT RUN means that brand has no catalog pin, or an older bundle artifact was not staged. A hosted runner cannot show reboot or logon startup, Tamper Protection, or interactive UI. DPI awareness is NOT PROVEN because the launcher process is not started. Defender and Windows Update end state are NOT PROVEN when the runner image does not expose them. The in-install swap catch is NOT PROVEN here because Install-Master.ps1 clears the test-only hook before elevation. Downgrade is NOT RUN when the catalog has no older approved pin or that pin has no staged bundle.'
+    $lines += 'NOT PROVEN is not a pass. NOT RUN means that brand has no catalog pin, or an older bundle artifact was not staged. A hosted runner cannot show reboot or logon startup, Tamper Protection, or interactive UI. DPI awareness is NOT PROVEN because the launcher process is not started. Defender and Windows Update end state are NOT PROVEN when the runner image does not expose them. DisableAntiSpyware is not written and is not a pass. Downgrade is NOT RUN when the catalog has no older approved pin or that pin has no staged bundle.'
     $lines += ''
     $lines += '## Checks'
     $lines += ''
@@ -770,7 +976,6 @@ try {
 Add-Check 'host' 'reboot-logon' 'NOT PROVEN' 'A hosted runner does not reboot or start a new logon session, so startup-at-logon is not proven. Registry before and after the install is a separate check.'
 Add-Check 'host' 'tamper-protection' 'NOT PROVEN' 'Tamper Protection behavior is not proven. Hosted runner images usually have it off or unmanaged, and an interactive Tamper Protection prompt cannot be answered here.'
 Add-Check 'host' 'interactive-ui' 'NOT PROVEN' 'Interactive desktop UI is not proven. This run does not open the launcher, dock, or shell.'
-Add-Check 'host' 'in-install-failure' 'NOT PROVEN' 'The catch inside Install-VerifiedTree is not armed on this run. Install-Master.ps1 deletes DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP before elevation, so a hosted install cannot inject a failure during the swap. scripts/Test-MasterInstaller.ps1 proves that catch in-process.'
 Add-DpiCheck
 
 $catalogPath = Join-Path $RepoRoot 'catalog\catalog.json'
@@ -845,12 +1050,16 @@ foreach ($brand in $brands) {
       if ($catalogBrand) { $tagPrefix = [string]$catalogBrand.tagPrefix }
       Add-UnpinnedTagCheck $id $tagPrefix $offlineParent $root
       Add-WrongTargetCheck $id $tag $offlineParent $root
+      Add-LiveLockCheck $id $tag $pinnedVersion $offlineParent $root
+      Add-StaleLockCheck $id $tag $offlineParent $root
     } else {
       $a += New-Part 'FAIL' ("downloaded artifact does not match the catalog pin. zip={0} bytes={1} manifest={2} manifest.sha256={3}" -f $zipHash, $zipBytes, $manifestHash, [string]$manifest.sha256)
       Add-Check $id 'ps1-parse' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
       Add-Check $id 'xaml' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
       Add-Check $id 'unpinned-tag' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
       Add-Check $id 'wrong-target' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
+      Add-Check $id 'live-lock' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
+      Add-Check $id 'stale-lock' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
     }
 
     $startupBefore = Get-StartupSnapshot
@@ -1004,8 +1213,10 @@ foreach ($brand in $brands) {
     Add-CombinedCheck $id 'e' $e
     if ($pinMatch) {
       Add-InterruptedSwapCheck $id $tag $offlineParent $root
+      Add-InInstallFailureCheck $id $tag $offlineParent $root
     } else {
       Add-Check $id 'interrupted-swap' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
+      Add-Check $id 'in-install-failure' 'FAIL' 'Skipped because the downloaded zip does not match the catalog pin.'
     }
 
     $f = @()
@@ -1060,6 +1271,8 @@ foreach ($brand in $brands) {
         $f += New-Part 'PASS' 'Set-MpPreference values match the disable plan'
       }
     }
+    $spywareVerdict = Get-DisableAntiSpywarePolicyVerdict $plan $installEvents
+    $f += New-Part $spywareVerdict.Status $spywareVerdict.Detail
     $policyAfter = Get-PolicyImage $plan
     $policyUnreadable = $false
     foreach ($row in @($policyAfter)) { if (-not $row.Readable) { $policyUnreadable = $true } }

@@ -27,19 +27,376 @@ function Test-SupervisorRelaunchBlocked {
   return (Test-Path -LiteralPath (Get-BrandInstallLockPath $Root))
 }
 
+# A live lock is an owner PID that is still alive and matches the recorded process
+# start time, or a live PID whose start time cannot be read while the nonce is present.
+# A blank recorded start time cannot prove the PID was reused, so that lock follows age.
+# Liveness is checked before age. A live owner older than the timeout is still live.
+# A dead PID or a reused PID is stale. Age applies to a legacy lock with no owner PID
+# and to a live PID whose recorded start time is missing.
+$script:BrandInstallLockTimeout = [timespan]::FromHours(2)
+$script:HarnessFailSwapToken = 'diagnostic-workstation-test-fail-swap'
+$script:HarnessFailSwapArmed = $false
+$script:BrandInstallLockFailWrite = $false
+
+function Read-BrandInstallLockRecord([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+  try {
+    $text = [System.IO.File]::ReadAllText($Path)
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    if (-not $text.TrimStart().StartsWith('{')) { return $null }
+    return ($text | ConvertFrom-Json)
+  } catch {
+    return $null
+  }
+}
+
+function Test-LockTimestampMissing($Value) {
+  if ($null -eq $Value) { return $true }
+  if ($Value -is [datetime]) { return $false }
+  if ($Value -is [datetimeoffset]) { return $false }
+  return [string]::IsNullOrWhiteSpace([string]$Value)
+}
+
+function ConvertTo-LockUtcDateTime($Value) {
+  if ($null -eq $Value) { return $null }
+  if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+  if ($Value -is [datetimeoffset]) { return $Value.UtcDateTime }
+  $text = [string]$Value
+  if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+  $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+  $parsed = [datetime]::Parse($text, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]$styles)
+  return $parsed.ToUniversalTime()
+}
+
+function Get-BrandInstallLockAge($Record, [string]$Path) {
+  $created = $null
+  if ($Record -and -not (Test-LockTimestampMissing $Record.createdUtc)) {
+    try {
+      $utc = ConvertTo-LockUtcDateTime $Record.createdUtc
+      if ($null -ne $utc) {
+        $created = [datetimeoffset]::new([datetime]::SpecifyKind($utc, [System.DateTimeKind]::Utc))
+      }
+    } catch { $created = $null }
+  }
+  if (-not $created -and (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    $created = [datetimeoffset](Get-Item -LiteralPath $Path).LastWriteTimeUtc
+  }
+  if (-not $created) { return [timespan]::MaxValue }
+  return ([datetimeoffset]::UtcNow - $created)
+}
+
+function Test-ProcessIdAlive([int]$ProcessId) {
+  if ($ProcessId -le 0) { return $false }
+  $found = @(Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+  return ($found.Count -gt 0)
+}
+
+function Get-ProcessStartUtc([int]$ProcessId) {
+  try {
+    $proc = Get-Process -Id $ProcessId -ErrorAction Stop
+    return $proc.StartTime.ToUniversalTime()
+  } catch {
+    return $null
+  }
+}
+
+function Test-StartTimesMatch($ActualUtc, $Recorded) {
+  if ($null -eq $ActualUtc) { return $false }
+  if (Test-LockTimestampMissing $Recorded) { return $false }
+  try { $parsed = ConvertTo-LockUtcDateTime $Recorded } catch { return $false }
+  if ($null -eq $parsed) { return $false }
+  $delta = ($ActualUtc - $parsed).TotalSeconds
+  if ($delta -lt 0) { $delta = -$delta }
+  return ($delta -lt 2)
+}
+
+function Get-BrandInstallLockState([string]$Path) {
+  $absent = [pscustomobject]@{ Status = 'absent'; Reason = ''; Record = $null }
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $absent }
+  $record = Read-BrandInstallLockRecord $Path
+  if ($record -and $record.ownerPid) {
+    $ownerPid = 0
+    try { $ownerPid = [int]$record.ownerPid } catch { $ownerPid = 0 }
+    if ($ownerPid -gt 0) {
+      $start = Get-ProcessStartUtc $ownerPid
+      $recordedMissing = Test-LockTimestampMissing $record.ownerStartUtc
+      $startMatches = $false
+      if (-not $recordedMissing) { $startMatches = Test-StartTimesMatch $start $record.ownerStartUtc }
+      $nonce = [string]$record.nonce
+      $nonceMatches = (-not [string]::IsNullOrWhiteSpace($nonce)) -and ($nonce -ceq [string]$script:BrandInstallLockNonce)
+      if (($ownerPid -eq $PID) -and ($nonceMatches -or $startMatches)) {
+        return [pscustomobject]@{ Status = 'owned'; Reason = 'owner'; Record = $record }
+      }
+      $alive = Test-ProcessIdAlive $ownerPid
+      if ($alive) {
+        if ($startMatches) {
+          return [pscustomobject]@{ Status = 'live'; Reason = 'start-time'; Record = $record }
+        }
+        if (($null -eq $start) -and (-not [string]::IsNullOrWhiteSpace($nonce))) {
+          return [pscustomobject]@{ Status = 'live'; Reason = 'nonce'; Record = $record }
+        }
+        if (-not $recordedMissing) {
+          return [pscustomobject]@{ Status = 'stale'; Reason = 'pid-reused'; Record = $record }
+        }
+      } else {
+        return [pscustomobject]@{ Status = 'stale'; Reason = 'dead-pid'; Record = $record }
+      }
+    }
+  }
+  $age = Get-BrandInstallLockAge $record $Path
+  if ($age -gt $script:BrandInstallLockTimeout) {
+    return [pscustomobject]@{ Status = 'stale'; Reason = 'timeout'; Record = $record }
+  }
+  return [pscustomobject]@{ Status = 'live'; Reason = 'unverified'; Record = $record }
+}
+
+function Get-BrandInstallLockText([string]$Nonce) {
+  $start = Get-ProcessStartUtc $PID
+  $startText = ''
+  if ($start) { $startText = ([datetimeoffset]$start).ToString('o') }
+  $record = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $PID
+    ownerStartUtc = $startText
+    nonce = $Nonce
+    createdUtc = [datetimeoffset]::UtcNow.ToString('o')
+  }
+  return (($record | ConvertTo-Json -Compress) + "`n")
+}
+
+function New-BrandInstallLockFile([string]$Path, [string]$Nonce) {
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  $bytes = $utf8.GetBytes((Get-BrandInstallLockText $Nonce))
+  $stream = $null
+  $created = $false
+  try {
+    $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    $created = $true
+  } catch [System.IO.IOException] {
+    if (Test-Path -LiteralPath $Path) { return $false }
+    throw
+  }
+  $failed = $false
+  $writeError = $null
+  try {
+    if ($script:BrandInstallLockFailWrite) { throw (New-Object System.IO.IOException 'lock write failed') }
+    $stream.Write($bytes, 0, $bytes.Length)
+  } catch {
+    $failed = $true
+    $writeError = $_
+  } finally {
+    if ($stream) { $stream.Dispose() }
+  }
+  if ($failed) {
+    if ($created) {
+      try { [System.IO.File]::Delete($Path) } catch { }
+    }
+    throw $writeError
+  }
+  return $true
+}
+
+function Move-BrandInstallLockAside([string]$Path) {
+  $claim = $Path + '.reclaim-' + [guid]::NewGuid().ToString('n')
+  try {
+    [System.IO.File]::Move($Path, $claim)
+  } catch {
+    return $null
+  }
+  return $claim
+}
+
+function Restore-MovedLock([string]$Claim, [string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Claim)) { return }
+  $attempt = 0
+  while ($attempt -lt 3) {
+    $attempt++
+    if (-not (Test-Path -LiteralPath $Claim -PathType Leaf)) { return }
+    try {
+      [System.IO.File]::Move($Claim, $Path)
+      return
+    } catch {
+      $length = -1
+      try {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+          $length = [int64](Get-Item -LiteralPath $Path).Length
+        }
+      } catch {
+        $length = -1
+      }
+      if ($length -eq 0) {
+        try { [System.IO.File]::Delete($Path) } catch { }
+        continue
+      }
+      return
+    }
+  }
+}
+
+function Remove-StaleLockSidecars([string]$Path) {
+  $directory = Split-Path -Parent $Path
+  if ([string]::IsNullOrWhiteSpace($directory)) { return }
+  if (-not (Test-Path -LiteralPath $directory -PathType Container)) { return }
+  $leaf = Split-Path -Leaf $Path
+  $cutoff = [datetime]::UtcNow.Add(-$script:BrandInstallLockTimeout)
+  $prefixes = @(
+    ($leaf + '.reclaim-'),
+    ($leaf + '.release-'),
+    ($leaf + '.refresh-')
+  )
+  foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force -File -ErrorAction SilentlyContinue)) {
+    $matched = $false
+    foreach ($prefix in $prefixes) {
+      if ($item.Name.StartsWith($prefix, [System.StringComparison]::Ordinal)) { $matched = $true }
+    }
+    if (-not $matched) { continue }
+    try {
+      if ($item.LastWriteTimeUtc -lt $cutoff) {
+        Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+      }
+    } catch { }
+  }
+}
+
+function Update-OwnedBrandInstallLock([string]$Path, [string]$Nonce, [string]$ExpectedNonce) {
+  $temp = $Path + '.refresh-' + [guid]::NewGuid().ToString('n')
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($temp, (Get-BrandInstallLockText $Nonce), $utf8)
+  $again = Read-BrandInstallLockRecord $Path
+  $current = ''
+  if ($again) { $current = [string]$again.nonce }
+  if ($current -cne $ExpectedNonce) {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  $backup = $Path + '.refresh-bak'
+  try {
+    [System.IO.File]::Replace($temp, $Path, $backup)
+  } catch {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
+  $check = Read-BrandInstallLockRecord $Path
+  return ($check -and ([string]$check.nonce -ceq $Nonce))
+}
+
 function Set-BrandInstallLock {
-  param([Parameter(Mandatory = $true)][string]$Root)
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [string]$LogDirectory
+  )
   if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $null }
   $path = Get-BrandInstallLockPath $Root
-  Write-Utf8NoBom $path ("master-installer " + [datetimeoffset]::UtcNow.ToString('o') + "`n")
-  return $path
+  Remove-StaleLockSidecars $path
+  $attempt = 0
+  while ($attempt -lt 8) {
+    $attempt++
+    $state = Get-BrandInstallLockState $path
+    if ($state.Status -eq 'live') {
+      $owner = 'owner cannot be verified'
+      if ($state.Record -and $state.Record.ownerPid) { $owner = 'process ' + [string]$state.Record.ownerPid }
+      throw "Another install already holds install-in-progress.lock for this folder ($owner). Nothing was installed."
+    }
+    if ($state.Status -eq 'owned') {
+      $nonce = ''
+      $expected = ''
+      if ($state.Record) { $expected = [string]$state.Record.nonce }
+      if (-not [string]::IsNullOrWhiteSpace($expected)) { $nonce = $expected }
+      else { $nonce = [guid]::NewGuid().ToString('n') }
+      if (Update-OwnedBrandInstallLock $path $nonce $expected) {
+        $script:BrandInstallLockNonce = $nonce
+        return $path
+      }
+      continue
+    }
+    if ($state.Status -eq 'stale') {
+      $before = ''
+      try { $before = [System.IO.File]::ReadAllText($path) } catch { $before = '' }
+      $claim = Move-BrandInstallLockAside $path
+      if (-not $claim) { continue }
+      $after = $null
+      try { $after = [System.IO.File]::ReadAllText($claim) } catch { $after = $null }
+      if ($null -eq $after -or $after -cne $before) {
+        Restore-MovedLock $claim $path
+        continue
+      }
+      Remove-Item -LiteralPath $claim -Force
+      if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) {
+        $ownerPid = $null
+        if ($state.Record) { $ownerPid = $state.Record.ownerPid }
+        Add-MasterJournal $LogDirectory ([pscustomobject]@{
+          step = 'install-lock-reclaimed'
+          reason = [string]$state.Reason
+          ownerPid = $ownerPid
+          path = $path
+        })
+      }
+    }
+    $created = [guid]::NewGuid().ToString('n')
+    if (New-BrandInstallLockFile $path $created) {
+      $script:BrandInstallLockNonce = $created
+      return $path
+    }
+  }
+  throw 'Could not take install-in-progress.lock. Nothing was installed.'
+}
+
+function Test-HarnessFailSwapMarker {
+  param([string]$InstallerData)
+  if ([string]::IsNullOrWhiteSpace($InstallerData)) { return $false }
+  $pointerPath = Join-Path -Path $InstallerData -ChildPath 'fail-swap.location'
+  if (-not (Test-Path -LiteralPath $pointerPath -PathType Leaf)) { return $false }
+  $markerPath = ([System.IO.File]::ReadAllText($pointerPath)).Trim()
+  if ([string]::IsNullOrWhiteSpace($markerPath)) { return $false }
+  if ((Split-Path -Leaf $markerPath) -cne 'fail-swap.marker') { return $false }
+  if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { return $false }
+  $markerFull = [System.IO.Path]::GetFullPath($markerPath)
+  $dataFull = [System.IO.Path]::GetFullPath($InstallerData)
+  if ($markerFull.StartsWith($dataFull, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+  $token = ([System.IO.File]::ReadAllText($markerPath)).Trim()
+  if ($token -cne $script:HarnessFailSwapToken) { return $false }
+  return $true
+}
+
+function Set-HarnessFailSwapArmed {
+  param(
+    [switch]$Allow,
+    [string]$InstallerData,
+    [string]$LogDirectory
+  )
+  # Production installs, including Setup.exe, do not pass -Allow.
+  # A user-level process cannot arm the swap failure by writing under LOCALAPPDATA.
+  $script:HarnessFailSwapArmed = $false
+  if (-not $Allow) { return }
+  if (-not (Test-HarnessFailSwapMarker $InstallerData)) { return }
+  $script:HarnessFailSwapArmed = $true
+  if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) {
+    Add-MasterJournal $LogDirectory ([pscustomobject]@{
+      step = 'harness-fail-swap-armed'
+      marker = 'fail-swap.marker'
+    })
+  }
 }
 
 function Remove-BrandInstallLock {
   param([string]$Root)
   if ([string]::IsNullOrWhiteSpace($Root)) { return }
   $path = Get-BrandInstallLockPath $Root
-  if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+  Remove-StaleLockSidecars $path
+  $nonce = [string]$script:BrandInstallLockNonce
+  if ([string]::IsNullOrWhiteSpace($nonce)) { return }
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+  $record = Read-BrandInstallLockRecord $path
+  if (-not $record -or [string]$record.nonce -cne $nonce) { return }
+  $claim = $path + '.release-' + [guid]::NewGuid().ToString('n')
+  try { [System.IO.File]::Move($path, $claim) } catch { return }
+  $moved = Read-BrandInstallLockRecord $claim
+  if ($moved -and [string]$moved.nonce -ceq $nonce) {
+    Remove-Item -LiteralPath $claim -Force -ErrorAction SilentlyContinue
+    return
+  }
+  Restore-MovedLock $claim $path
 }
 
 function Test-IsBrandSupervisorCommand {
@@ -236,8 +593,11 @@ function Install-VerifiedTree {
   if ($existed) { Copy-PreservedTree $Root $Staging }
   if ($existed) { Rename-Item -LiteralPath $Root -NewName $prevLeaf }
   try {
-    # Library test hook. Install-Master.ps1 deletes this variable before elevation, so a production run cannot set it.
-    if ($env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP -eq '1') {
+    # Library tests set the env var in-process. Install-Master.ps1 clears it before elevation.
+    # HarnessFailSwapArmed is set only when -AllowHarnessFailSwap is passed. Production
+    # installs, including Setup.exe, do not pass that switch, so a fail-swap.marker
+    # pointer under LOCALAPPDATA cannot arm this throw.
+    if (($env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP -eq '1') -or $script:HarnessFailSwapArmed) {
       throw 'test-only failure during install swap'
     }
     Rename-Item -LiteralPath $Staging -NewName $leaf
@@ -282,6 +642,7 @@ function Install-ApprovedBrand {
     [switch]$AllowTestRoot,
     [switch]$AllowUncheckedProcesses,
     [switch]$ApplySecurity,
+    [switch]$AllowHarnessFailSwap,
     [string]$InstallRoot,
     [string]$LogDirectory,
     [string]$InstallerData,
@@ -316,6 +677,7 @@ function Install-ApprovedBrand {
   New-Item -ItemType Directory -Force -Path $InstallerData, $LogDirectory | Out-Null
   $progress = Join-Path -Path $InstallerData -ChildPath 'install-in-progress.json'
   Repair-InterruptedInstall $progress
+  Set-HarnessFailSwapArmed -Allow:$AllowHarnessFailSwap -InstallerData $InstallerData -LogDirectory $LogDirectory
 
   $catalogPath = Join-MasterPath $RepoRoot @('catalog', 'catalog.json')
   $pinPath = Join-MasterPath $RepoRoot @('catalog', 'catalog.sha256')
@@ -363,13 +725,13 @@ function Install-ApprovedBrand {
     # Hold the lock before the rename. WorkstationManager will not start a new PowerShell
     # while it exists. The renamed previous folder takes this copy with it, so the new
     # root gets a fresh lock before Windows Update or Defender run.
-    $heldLock = Set-BrandInstallLock $root
+    $heldLock = Set-BrandInstallLock -Root $root -LogDirectory $LogDirectory
     if (-not [string]::IsNullOrWhiteSpace([string]$heldLock)) { $lockHeld = $true }
     $stopped = @()
     if (-not $AllowUncheckedProcesses) { $stopped = @(Stop-BrandSupervisorProcesses -Root $root) }
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'supervisor-held'; brand = $Brand; stopped = @($stopped) })
     Install-VerifiedTree -Staging $staging -Root $root -Brand $Brand -Tag ([string]$release.tag) -Version ([string]$release.version) -ZipSha256 ([string]$release.sha256) -ProgressPath $progress -AllowDowngrade:$AllowDowngrade
-    $heldLock = Set-BrandInstallLock $root
+    $heldLock = Set-BrandInstallLock -Root $root -LogDirectory $LogDirectory
     if (-not [string]::IsNullOrWhiteSpace([string]$heldLock)) { $lockHeld = $true }
     if (-not $AllowUncheckedProcesses) { Stop-BrandSupervisorProcesses -Root $root | Out-Null }
     Write-TrustState $trust ([int]$loaded.Catalog.catalogSerial) $loaded.Digest
@@ -392,6 +754,7 @@ function Install-ApprovedBrand {
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'failed'; brand = $Brand; message = $_.Exception.Message })
     throw
   } finally {
+    # Remove-BrandInstallLock deletes the file only when its nonce is the one this run created.
     if ($lockHeld) { Remove-BrandInstallLock $root }
     if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
     if ($work -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
