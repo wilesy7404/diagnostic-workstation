@@ -118,19 +118,10 @@ function Receive-ApprovedPayload {
   }
   if (-not $offline) { $offline = Find-OfflinePayload $tag $Source $RepoRoot $asset $manifestName }
   if ($offline) {
-    if ([string]::IsNullOrWhiteSpace($WorkDirectory)) { throw 'Work directory is required. Nothing was installed.' }
-    $sealed = Join-Path -Path $WorkDirectory -ChildPath 'sealed-payload'
-    if (-not (Test-Path -LiteralPath $sealed)) { New-Item -ItemType Directory -Force -Path $sealed | Out-Null }
-    $sealedZip = Join-Path -Path $sealed -ChildPath $asset
-    $sealedManifest = Join-Path -Path $sealed -ChildPath $manifestName
-    $sealedZipBytes = [System.IO.File]::ReadAllBytes($offline.Zip)
-    $sealedManifestBytes = [System.IO.File]::ReadAllBytes($offline.Manifest)
-    [System.IO.File]::WriteAllBytes($sealedZip, $sealedZipBytes)
-    [System.IO.File]::WriteAllBytes($sealedManifest, $sealedManifestBytes)
     return [pscustomobject]@{
       Source = 'offline'
-      Zip = $sealedZip
-      Manifest = $sealedManifest
+      Zip = $offline.Zip
+      Manifest = $offline.Manifest
       OnlineError = $onlineError
     }
   }

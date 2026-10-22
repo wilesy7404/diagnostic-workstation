@@ -38,9 +38,12 @@ function Test-IsWindowsAdmin {
 }
 
 function Get-MasterWindowsPowerShell {
-  if ((Test-MasterHostWindows) -and $env:SystemRoot) {
-    $candidate = Join-Path -Path $env:SystemRoot -ChildPath 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    if (Test-Path -LiteralPath $candidate) { return $candidate }
+  if (Test-MasterHostWindows) {
+    $system = [Environment]::GetFolderPath('System')
+    if (-not [string]::IsNullOrWhiteSpace($system)) {
+      $candidate = Join-Path -Path $system -ChildPath 'WindowsPowerShell\v1.0\powershell.exe'
+      if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
   }
   return 'powershell.exe'
 }
