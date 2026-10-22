@@ -7,7 +7,13 @@ administrator approval once (UAC). Setup.exe then runs the bundled
 Install-Master.ps1 in that same run. There is no second installer and no
 extra confirmation screen.
 
-This package is unsigned. ECDSA P-256 signing comes later.
+This package is unsigned. ECDSA P-256 signing comes later. Until then,
+Microsoft SmartScreen or Microsoft Defender may flag Setup.exe. If Windows
+shows a warning, choose More info, then Run anyway.
+
+PS2EXE output is not byte-reproducible. Setup.exe differs from one build to
+the next. The SHA-256 of DiagnosticWorkstation-Setup.zip from the CI artifact
+is the attested value.
 
 Choose a brand
 --------------
@@ -36,7 +42,8 @@ These parameters are passed through to Install-Master.ps1:
   -VerifyOnly
   -AllowDowngrade
 
-The exit code of Install-Master.ps1 is the exit code of Setup.exe.
+Setup.exe runs Install-Master.ps1 in a child powershell.exe and returns
+that process exit code.
 
   0   Windows Update is disabled and Defender preferences plus policy
       values are applied. WinDefend and MDCoreSvc are left running.
@@ -105,9 +112,16 @@ unchanged.
 Check this package
 ------------------
 
-SHA256SUMS.txt lists every other file in this zip (a file cannot contain
-its own hash). The .sha256 file published next to the zip is the SHA-256
-of DiagnosticWorkstation-Setup.zip, which includes SHA256SUMS.txt.
-catalog\catalog.sha256 is the pin for catalog\catalog.json.
+SHA256SUMS.txt lists every file in this zip except itself and Setup.exe.
+Setup.exe contains the SHA-256 of SHA256SUMS.txt, so that file cannot list
+Setup.exe. On startup, before anything else, Setup.exe checks SHA256SUMS.txt
+against the embedded hash, then checks every listed file. It stops with a
+nonzero exit if a hash does not match, a listed file is missing, or an
+unlisted extra file is present. Nothing is installed after a failed check.
+
+The .sha256 file published next to the zip is the SHA-256 of
+DiagnosticWorkstation-Setup.zip, which includes SHA256SUMS.txt and Setup.exe.
+That CI artifact hash is the attested value. catalog\catalog.sha256 is the
+pin for catalog\catalog.json.
 
 Do not run this on a live shop PC. Use a throwaway Windows VM.
