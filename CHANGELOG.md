@@ -1,14 +1,14 @@
 # Changelog
 
-BMW `1.0.2-beta.1` and Mercedes `0.1.3-beta.4` are pinned and not published. There is no tag and no GitHub release yet. Mercedes `0.1.3-beta.3` was built and then voided. It was never tagged or published, and it is not pinned.
+BMW `1.0.2-beta.1` and Mercedes `0.1.3-beta.4` are pinned and were published as GitHub prereleases on 2026-10-18 (releases `416761964` and `416761930`). Mercedes `0.1.3-beta.3` was built and then voided. It was never tagged or published, and it is not pinned.
 
 ## Master installer
 
-`DisableAntiSpyware` is not written. The policy is deprecated and has been ignored since the August 2020 Defender update, and Tamper Protection reverts the DWORD. A missing value after install is expected. It is not a successful write and not a silent failure of this installer. Defender disable stays on `Set-MpPreference`, `DisableAntiVirus`, and the six real-time policy DWORDs. `WinDefend` and `MDCoreSvc` are not stopped.
+`DisableAntiSpyware` is not written. The policy is deprecated and has been ignored since the August 2020 Defender update, and Tamper Protection reverts the DWORD. A missing value after install is expected. It is not a successful write and not a silent failure of this installer. A leftover `DisableAntiSpyware` DWORD from an older build is removed once, and that removal is journaled as `defender-legacy-disableantispyware`. Defender disable stays on `Set-MpPreference`, `DisableAntiVirus`, and the six real-time policy DWORDs. `WinDefend` and `MDCoreSvc` are not stopped.
 
-## Mercedes-Benz 0.1.3-beta.4 (prerelease, catalog pin, not published) — 2026-10-18
+## Mercedes-Benz 0.1.3-beta.4 (prerelease, catalog pin) — 2026-10-18
 
-Source commit `2b138bf07b0b083615a76a7c16da5e27f16b75e8`. Workflow run [39091982618](https://github.com/wilesy7404/diagnostic-workstation/actions/runs/39091982618). Catalog serial 3. Not tagged and not published.
+Source commit `2b138bf07b0b083615a76a7c16da5e27f16b75e8`. Workflow run [39091982618](https://github.com/wilesy7404/diagnostic-workstation/actions/runs/39091982618). Catalog serial 3. Published as GitHub prerelease `416761930` on 2026-10-18.
 
 `workstation.zip` is 1321743 bytes, SHA-256 `ac8a82c0052cd1718cc050c5e28418efe5ed7afea104baaeb0940fcc612f661a`. `update-manifest.json` is 3338 bytes, SHA-256 `8c5d857933654bcbfa5bc84140c513d2c3d83863e2e3c0cf956c7471891abdc9`. contentDigest `b43616e9f62b1c254115eab33bbce36eeaf410b60e1de723f3125d18a5267779`. 20 files.
 
@@ -62,13 +62,13 @@ Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, 
 
 Changes since the prior Mercedes label `mercedes-v0.1.3-beta.2`:
 
-- Voided, never published: `WorkstationManager.exe` embedded all brand logos. `0.1.3-beta.4` is pinned in the catalog and is not published. The zip's only logo file is `branding/mercedes.png`.
+- Voided, never published: `WorkstationManager.exe` embedded all brand logos. `0.1.3-beta.4` is pinned in the catalog and was published as GitHub prerelease `416761930` on 2026-10-18. The zip's only logo file is `branding/mercedes.png`.
 - `apps.json` is removed from the bundle and kept on the machine.
 - `WorkstationManager.exe` is the supervisor.
 - An existing `profile.json` is kept. A fresh install receives the bundle default.
 - Non-ASCII `.ps1` files that had no UTF-8 BOM get that BOM during packaging.
 
-`mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` are existing published prereleases with different bytes. They stay unpinned. `0.1.3-beta.3` was built from commit `7b6befdf` as workflow run 39087424705 and voided because `WorkstationManager.exe` embedded all brand logos. It was never tagged or published. `0.1.3-beta.4` is pinned in the catalog and is not published.
+`mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` are existing published prereleases with different bytes. They stay unpinned. `0.1.3-beta.3` was built from commit `7b6befdf` as workflow run 39087424705 and voided because `WorkstationManager.exe` embedded all brand logos. It was never tagged or published. `0.1.3-beta.4` is pinned in the catalog and was published as GitHub prerelease `416761930` on 2026-10-18.
 
 Known issues: no VM test yet. DPI, multi-monitor, and Windows PowerShell 5.1 are not yet verified.
 
@@ -99,7 +99,7 @@ c15fa7d6f05b67c1f540213846ca8e44ebe25d9c76184a9a47ac9c00166fde01  257  profile.j
 
 ## BMW 1.0.2-beta.1 (prerelease, beta) — 2026-10-17
 
-Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, #11, and #12.
+Source commit `7b6befdfcb3d501a8b2f29b240adcb58df897fc5`. Pull requests #8, #9, #11, and #12. Published as GitHub prerelease `416761964` on 2026-10-18.
 
 `workstation.zip` is 48955 bytes, SHA-256 `77bf2e85b4192d0485d79e82a256a68494b673c99c67eb81f62f194e94c69978`. `update-manifest.json` is 2554 bytes, SHA-256 `82075f0f9751191eb3547fba2e05868ef656b6f567c5eeede5b62cd4c90d1136`. contentDigest `e07829490aff1f4de7ae919fb9d2cd86f4ddc64ed684c5d1e14d1537753b5cd9`. Workflow run [39087426283](https://github.com/wilesy7404/diagnostic-workstation/actions/runs/39087426283).
 

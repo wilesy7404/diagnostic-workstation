@@ -29,7 +29,8 @@ function Test-SupervisorRelaunchBlocked {
 
 # A live lock is an owner PID that is still alive and matches the recorded process
 # start time, or a live PID whose start time cannot be read while the nonce is present.
-# A dead PID, a reused PID, or a lock older than this timeout is stale and may be reclaimed.
+# Liveness is checked before age. A live owner older than the timeout is still live.
+# A dead PID or a reused PID is stale. Age applies only to a legacy lock with no owner PID.
 $script:BrandInstallLockTimeout = [timespan]::FromHours(2)
 $script:HarnessFailSwapToken = 'diagnostic-workstation-test-fail-swap'
 $script:HarnessFailSwapArmed = $false
@@ -86,41 +87,38 @@ function Get-BrandInstallLockState([string]$Path) {
   $absent = [pscustomobject]@{ Status = 'absent'; Reason = ''; Record = $null }
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $absent }
   $record = Read-BrandInstallLockRecord $Path
-  $age = Get-BrandInstallLockAge $record $Path
-  $timedOut = $age -gt $script:BrandInstallLockTimeout
   if ($record -and $record.ownerPid) {
     $ownerPid = 0
     try { $ownerPid = [int]$record.ownerPid } catch { $ownerPid = 0 }
-    $start = $null
-    if ($ownerPid -gt 0) { $start = Get-ProcessStartUtc $ownerPid }
-    $startMatches = Test-StartTimesMatch $start ([string]$record.ownerStartUtc)
-    $nonce = [string]$record.nonce
-    $nonceMatches = (-not [string]::IsNullOrWhiteSpace($nonce)) -and ($nonce -ceq [string]$script:BrandInstallLockNonce)
-    if (($ownerPid -eq $PID) -and ($nonceMatches -or $startMatches)) {
-      return [pscustomobject]@{ Status = 'owned'; Reason = 'owner'; Record = $record }
-    }
-    if ($timedOut) {
-      return [pscustomobject]@{ Status = 'stale'; Reason = 'timeout'; Record = $record }
-    }
-    $alive = Test-ProcessIdAlive $ownerPid
-    if (-not $alive) {
+    if ($ownerPid -gt 0) {
+      $start = Get-ProcessStartUtc $ownerPid
+      $startMatches = Test-StartTimesMatch $start ([string]$record.ownerStartUtc)
+      $nonce = [string]$record.nonce
+      $nonceMatches = (-not [string]::IsNullOrWhiteSpace($nonce)) -and ($nonce -ceq [string]$script:BrandInstallLockNonce)
+      if (($ownerPid -eq $PID) -and ($nonceMatches -or $startMatches)) {
+        return [pscustomobject]@{ Status = 'owned'; Reason = 'owner'; Record = $record }
+      }
+      $alive = Test-ProcessIdAlive $ownerPid
+      if ($alive) {
+        if ($startMatches) {
+          return [pscustomobject]@{ Status = 'live'; Reason = 'start-time'; Record = $record }
+        }
+        if (($null -eq $start) -and (-not [string]::IsNullOrWhiteSpace($nonce))) {
+          return [pscustomobject]@{ Status = 'live'; Reason = 'nonce'; Record = $record }
+        }
+        return [pscustomobject]@{ Status = 'stale'; Reason = 'pid-reused'; Record = $record }
+      }
       return [pscustomobject]@{ Status = 'stale'; Reason = 'dead-pid'; Record = $record }
     }
-    if ($startMatches) {
-      return [pscustomobject]@{ Status = 'live'; Reason = 'start-time'; Record = $record }
-    }
-    if (($null -eq $start) -and (-not [string]::IsNullOrWhiteSpace($nonce))) {
-      return [pscustomobject]@{ Status = 'live'; Reason = 'nonce'; Record = $record }
-    }
-    return [pscustomobject]@{ Status = 'stale'; Reason = 'pid-reused'; Record = $record }
   }
-  if ($timedOut) {
+  $age = Get-BrandInstallLockAge $record $Path
+  if ($age -gt $script:BrandInstallLockTimeout) {
     return [pscustomobject]@{ Status = 'stale'; Reason = 'timeout'; Record = $record }
   }
   return [pscustomobject]@{ Status = 'live'; Reason = 'unverified'; Record = $record }
 }
 
-function Write-BrandInstallLockFile([string]$Path, [string]$Nonce) {
+function Get-BrandInstallLockText([string]$Nonce) {
   $start = Get-ProcessStartUtc $PID
   $startText = ''
   if ($start) { $startText = ([datetimeoffset]$start).ToString('o') }
@@ -131,7 +129,65 @@ function Write-BrandInstallLockFile([string]$Path, [string]$Nonce) {
     nonce = $Nonce
     createdUtc = [datetimeoffset]::UtcNow.ToString('o')
   }
-  Write-Utf8NoBom $Path (($record | ConvertTo-Json -Compress) + "`n")
+  return (($record | ConvertTo-Json -Compress) + "`n")
+}
+
+function New-BrandInstallLockFile([string]$Path, [string]$Nonce) {
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  $bytes = $utf8.GetBytes((Get-BrandInstallLockText $Nonce))
+  $stream = $null
+  try {
+    $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+  } catch [System.IO.IOException] {
+    if (Test-Path -LiteralPath $Path) { return $false }
+    throw
+  }
+  try {
+    $stream.Write($bytes, 0, $bytes.Length)
+  } finally {
+    $stream.Dispose()
+  }
+  return $true
+}
+
+function Move-BrandInstallLockAside([string]$Path) {
+  $claim = $Path + '.reclaim-' + [guid]::NewGuid().ToString('n')
+  try {
+    [System.IO.File]::Move($Path, $claim)
+  } catch {
+    return $null
+  }
+  return $claim
+}
+
+function Restore-MovedLock([string]$Claim, [string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Claim)) { return }
+  if (-not (Test-Path -LiteralPath $Claim)) { return }
+  if (Test-Path -LiteralPath $Path) { return }
+  try { [System.IO.File]::Move($Claim, $Path) } catch { }
+}
+
+function Update-OwnedBrandInstallLock([string]$Path, [string]$Nonce, [string]$ExpectedNonce) {
+  $temp = $Path + '.refresh-' + [guid]::NewGuid().ToString('n')
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($temp, (Get-BrandInstallLockText $Nonce), $utf8)
+  $again = Read-BrandInstallLockRecord $Path
+  $current = ''
+  if ($again) { $current = [string]$again.nonce }
+  if ($current -cne $ExpectedNonce) {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  $backup = $Path + '.refresh-bak'
+  try {
+    [System.IO.File]::Replace($temp, $Path, $backup)
+  } catch {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
+  $check = Read-BrandInstallLockRecord $Path
+  return ($check -and ([string]$check.nonce -ceq $Nonce))
 }
 
 function Set-BrandInstallLock {
@@ -141,34 +197,57 @@ function Set-BrandInstallLock {
   )
   if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $null }
   $path = Get-BrandInstallLockPath $Root
-  $state = Get-BrandInstallLockState $path
-  if ($state.Status -eq 'live') {
-    $owner = 'owner cannot be verified'
-    if ($state.Record -and $state.Record.ownerPid) { $owner = 'process ' + [string]$state.Record.ownerPid }
-    throw "Another install already holds install-in-progress.lock for this folder ($owner). Nothing was installed."
-  }
-  if ($state.Status -eq 'stale') {
-    Remove-Item -LiteralPath $path -Force
-    if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) {
-      $ownerPid = $null
-      if ($state.Record) { $ownerPid = $state.Record.ownerPid }
-      Add-MasterJournal $LogDirectory ([pscustomobject]@{
-        step = 'install-lock-reclaimed'
-        reason = [string]$state.Reason
-        ownerPid = $ownerPid
-        path = $path
-      })
+  $attempt = 0
+  while ($attempt -lt 8) {
+    $attempt++
+    $state = Get-BrandInstallLockState $path
+    if ($state.Status -eq 'live') {
+      $owner = 'owner cannot be verified'
+      if ($state.Record -and $state.Record.ownerPid) { $owner = 'process ' + [string]$state.Record.ownerPid }
+      throw "Another install already holds install-in-progress.lock for this folder ($owner). Nothing was installed."
+    }
+    if ($state.Status -eq 'owned') {
+      $nonce = ''
+      $expected = ''
+      if ($state.Record) { $expected = [string]$state.Record.nonce }
+      if (-not [string]::IsNullOrWhiteSpace($expected)) { $nonce = $expected }
+      else { $nonce = [guid]::NewGuid().ToString('n') }
+      if (Update-OwnedBrandInstallLock $path $nonce $expected) {
+        $script:BrandInstallLockNonce = $nonce
+        return $path
+      }
+      continue
+    }
+    if ($state.Status -eq 'stale') {
+      $before = ''
+      try { $before = [System.IO.File]::ReadAllText($path) } catch { $before = '' }
+      $claim = Move-BrandInstallLockAside $path
+      if (-not $claim) { continue }
+      $after = $null
+      try { $after = [System.IO.File]::ReadAllText($claim) } catch { $after = $null }
+      if ($null -eq $after -or $after -cne $before) {
+        Restore-MovedLock $claim $path
+        continue
+      }
+      Remove-Item -LiteralPath $claim -Force
+      if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) {
+        $ownerPid = $null
+        if ($state.Record) { $ownerPid = $state.Record.ownerPid }
+        Add-MasterJournal $LogDirectory ([pscustomobject]@{
+          step = 'install-lock-reclaimed'
+          reason = [string]$state.Reason
+          ownerPid = $ownerPid
+          path = $path
+        })
+      }
+    }
+    $created = [guid]::NewGuid().ToString('n')
+    if (New-BrandInstallLockFile $path $created) {
+      $script:BrandInstallLockNonce = $created
+      return $path
     }
   }
-  $nonce = ''
-  if ($state.Status -eq 'owned' -and $state.Record -and -not [string]::IsNullOrWhiteSpace([string]$state.Record.nonce)) {
-    $nonce = [string]$state.Record.nonce
-  } else {
-    $nonce = [guid]::NewGuid().ToString('n')
-  }
-  $script:BrandInstallLockNonce = $nonce
-  Write-BrandInstallLockFile $path $nonce
-  return $path
+  throw 'Could not take install-in-progress.lock. Nothing was installed.'
 }
 
 function Test-HarnessFailSwapMarker {
@@ -188,11 +267,43 @@ function Test-HarnessFailSwapMarker {
   return $true
 }
 
+function Set-HarnessFailSwapArmed {
+  param(
+    [switch]$Allow,
+    [string]$InstallerData,
+    [string]$LogDirectory
+  )
+  # Production installs, including Setup.exe, do not pass -Allow.
+  # A user-level process cannot arm the swap failure by writing under LOCALAPPDATA.
+  $script:HarnessFailSwapArmed = $false
+  if (-not $Allow) { return }
+  if (-not (Test-HarnessFailSwapMarker $InstallerData)) { return }
+  $script:HarnessFailSwapArmed = $true
+  if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) {
+    Add-MasterJournal $LogDirectory ([pscustomobject]@{
+      step = 'harness-fail-swap-armed'
+      marker = 'fail-swap.marker'
+    })
+  }
+}
+
 function Remove-BrandInstallLock {
   param([string]$Root)
   if ([string]::IsNullOrWhiteSpace($Root)) { return }
+  $nonce = [string]$script:BrandInstallLockNonce
+  if ([string]::IsNullOrWhiteSpace($nonce)) { return }
   $path = Get-BrandInstallLockPath $Root
-  if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+  $record = Read-BrandInstallLockRecord $path
+  if (-not $record -or [string]$record.nonce -cne $nonce) { return }
+  $claim = $path + '.release-' + [guid]::NewGuid().ToString('n')
+  try { [System.IO.File]::Move($path, $claim) } catch { return }
+  $moved = Read-BrandInstallLockRecord $claim
+  if ($moved -and [string]$moved.nonce -ceq $nonce) {
+    Remove-Item -LiteralPath $claim -Force -ErrorAction SilentlyContinue
+    return
+  }
+  Restore-MovedLock $claim $path
 }
 
 function Test-IsBrandSupervisorCommand {
@@ -390,8 +501,9 @@ function Install-VerifiedTree {
   if ($existed) { Rename-Item -LiteralPath $Root -NewName $prevLeaf }
   try {
     # Library tests set the env var in-process. Install-Master.ps1 clears it before elevation.
-    # The VM harness arms the same catch only when fail-swap.marker exists in the harness
-    # work dir. A production run has neither, so this path cannot fire there.
+    # HarnessFailSwapArmed is set only when -AllowHarnessFailSwap is passed. Production
+    # installs, including Setup.exe, do not pass that switch, so a fail-swap.marker
+    # pointer under LOCALAPPDATA cannot arm this throw.
     if (($env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP -eq '1') -or $script:HarnessFailSwapArmed) {
       throw 'test-only failure during install swap'
     }
@@ -437,6 +549,7 @@ function Install-ApprovedBrand {
     [switch]$AllowTestRoot,
     [switch]$AllowUncheckedProcesses,
     [switch]$ApplySecurity,
+    [switch]$AllowHarnessFailSwap,
     [string]$InstallRoot,
     [string]$LogDirectory,
     [string]$InstallerData,
@@ -471,7 +584,7 @@ function Install-ApprovedBrand {
   New-Item -ItemType Directory -Force -Path $InstallerData, $LogDirectory | Out-Null
   $progress = Join-Path -Path $InstallerData -ChildPath 'install-in-progress.json'
   Repair-InterruptedInstall $progress
-  $script:HarnessFailSwapArmed = Test-HarnessFailSwapMarker $InstallerData
+  Set-HarnessFailSwapArmed -Allow:$AllowHarnessFailSwap -InstallerData $InstallerData -LogDirectory $LogDirectory
 
   $catalogPath = Join-MasterPath $RepoRoot @('catalog', 'catalog.json')
   $pinPath = Join-MasterPath $RepoRoot @('catalog', 'catalog.sha256')
@@ -548,6 +661,7 @@ function Install-ApprovedBrand {
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'failed'; brand = $Brand; message = $_.Exception.Message })
     throw
   } finally {
+    # Remove-BrandInstallLock deletes the file only when its nonce is the one this run created.
     if ($lockHeld) { Remove-BrandInstallLock $root }
     if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
     if ($work -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }

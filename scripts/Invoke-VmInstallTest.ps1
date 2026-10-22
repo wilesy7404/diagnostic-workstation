@@ -13,6 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'VmInstallVerdict.ps1')
 # The workflow commit is the harness checkout. catalog_ref is the catalog checkout.
 # Copy this commit's installer onto the catalog checkout so the run uses the harness
 # installer and the catalog_ref catalog together. A single-checkout run is unchanged.
@@ -54,16 +55,6 @@ function Add-Check([string]$Brand, [string]$Id, [string]$Status, [string]$Detail
     Detail = $Detail
   }
   Write-Output ("{0} {1} {2}: {3}" -f $Status, $Brand, $Id, $Detail)
-}
-
-function Get-CombinedStatus($Parts) {
-  foreach ($part in @($Parts)) {
-    if ($part.Status -eq 'FAIL') { return 'FAIL' }
-  }
-  foreach ($part in @($Parts)) {
-    if ($part.Status -eq 'NOT PROVEN') { return 'NOT PROVEN' }
-  }
-  return 'PASS'
 }
 
 function Format-PartDetail($Parts) {
@@ -333,8 +324,9 @@ function Read-InstallerOutput([string]$LogStem) {
   return (($text -replace '\s+', ' ').Trim())
 }
 
-function Invoke-BrandInstall([string]$BrandId, [string]$TagName, [string]$SourcePath, [string]$LogStem) {
+function Invoke-BrandInstall([string]$BrandId, [string]$TagName, [string]$SourcePath, [string]$LogStem, [switch]$AllowHarnessFailSwap) {
   $installArgs = @('-Brand', $BrandId, '-Channel', 'beta', '-Tag', $TagName, '-Source', $SourcePath, '-OfflineOnly')
+  if ($AllowHarnessFailSwap) { $installArgs += '-AllowHarnessFailSwap' }
   $code = Invoke-NativePowerShell -File (Join-Path $RepoRoot 'installer\Master\Install-Master.ps1') -Arguments $installArgs -LogStem $LogStem -TimeoutMs $script:InstallTimeoutMs
   return [pscustomobject]@{ Code = $code; Text = (Read-InstallerOutput $LogStem) }
 }
@@ -513,7 +505,7 @@ function Add-InInstallFailureCheck([string]$BrandId, [string]$TagName, [string]$
     $pointer = Join-Path $script:InstallerData 'fail-swap.location'
     [System.IO.File]::WriteAllText($pointer, ($arm + "`n"), $utf8)
     $logStem = Join-Path $ReportDir ($BrandId + '-in-install-failure')
-    $result = Invoke-BrandInstall $BrandId $TagName $SourcePath $logStem
+    $result = Invoke-BrandInstall $BrandId $TagName $SourcePath $logStem -AllowHarnessFailSwap
     $afterTree = Get-TreeFingerprint $Root
     $residue = Get-InstallResidue $Root
     $lockPath = Join-Path $Root 'install-in-progress.lock'
@@ -532,21 +524,6 @@ function Add-InInstallFailureCheck([string]$BrandId, [string]$TagName, [string]$
   } finally {
     Remove-FailSwapArm
     Remove-InstallProgress
-  }
-}
-
-function Get-DisableAntiSpywareImage {
-  $path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
-  $name = 'DisableAntiSpyware'
-  try {
-    $property = Get-ItemProperty -Path $path -Name $name -ErrorAction Stop
-    return [pscustomobject]@{ Readable = $true; Exists = $true; Value = $property.$name }
-  } catch {
-    $message = $_.Exception.Message
-    if ($message -match '(?i)does not exist|cannot find path|cannot find property') {
-      return [pscustomobject]@{ Readable = $true; Exists = $false; Value = $null }
-    }
-    return [pscustomobject]@{ Readable = $false; Exists = $false; Value = $null }
   }
 }
 
@@ -917,6 +894,20 @@ function Invoke-BundlePublishGate([string]$Brand, [string]$ZipPath) {
   }
 }
 
+function Get-GitHeadSha([string]$Directory) {
+  if ([string]::IsNullOrWhiteSpace($Directory) -or -not (Test-Path -LiteralPath $Directory)) { return 'unknown' }
+  $output = ''
+  try {
+    $output = (& git -C $Directory rev-parse HEAD 2>&1 | Out-String)
+  } catch {
+    return 'unknown'
+  }
+  if ($LASTEXITCODE -ne 0) { return 'unknown' }
+  $sha = ([string]$output).Trim()
+  if ($sha -notmatch '^[0-9a-fA-F]{40}$') { return 'unknown' }
+  return $sha
+}
+
 function Add-DpiCheck {
   Add-Check 'host' 'dpi-awareness' 'NOT PROVEN' 'DPI awareness is not asserted. This harness does not start the launcher process, so a reading from the harness process, including awareness 0, is not evidence.'
   Add-Check 'host' 'dpi-multimonitor' 'NOT PROVEN' 'DPI and multi-monitor layout are not proven on a headless hosted runner. This run does not change session scaling.'
@@ -948,6 +939,8 @@ function Write-VmInstallReport {
     $lines += ('Windows PowerShell {0}' -f $PSVersionTable.PSVersion.ToString())
     $lines += ('Computer: {0}' -f $env:COMPUTERNAME)
     $lines += ('Catalog ref: {0}' -f $CatalogRef)
+    $lines += ('Harness SHA: {0}' -f (Get-GitHeadSha $script:HarnessRepo))
+    $lines += ('Catalog SHA: {0}' -f (Get-GitHeadSha $RepoRoot))
     $lines += ('Mercedes artifact run: {0}' -f $MercedesRunId)
     $lines += ('BMW artifact run: {0}' -f $BmwRunId)
     $lines += ''
@@ -1278,6 +1271,8 @@ foreach ($brand in $brands) {
         $f += New-Part 'PASS' 'Set-MpPreference values match the disable plan'
       }
     }
+    $spywareVerdict = Get-DisableAntiSpywarePolicyVerdict $plan $installEvents
+    $f += New-Part $spywareVerdict.Status $spywareVerdict.Detail
     $policyAfter = Get-PolicyImage $plan
     $policyUnreadable = $false
     foreach ($row in @($policyAfter)) { if (-not $row.Readable) { $policyUnreadable = $true } }
@@ -1285,34 +1280,11 @@ foreach ($brand in $brands) {
       $f += New-Part 'NOT PROVEN' 'Defender policy DWORDs are not readable on this runner'
     } elseif ($defenderStatus -eq 'disabled') {
       $dwordBad = @()
-      $spywareFailed = $false
       foreach ($row in @($policyAfter)) {
-        if ($row.Name -eq 'DisableAntiSpyware') {
-          if (-not $row.Exists -or [int]$row.Value -ne 1) { $spywareFailed = $true }
-          continue
-        }
         if (-not $row.Exists -or [int]$row.Value -ne 1) { $dwordBad += $row.Name }
       }
-      $journalSpyware = $false
-      foreach ($event in @($installEvents)) {
-        if ([string]$event.step -ne 'defender-post') { continue }
-        foreach ($command in @($event.commands)) {
-          if ([string]$command.kind -eq 'Set-Policy' -and [string]$command.name -eq 'DisableAntiSpyware') { $journalSpyware = $true }
-        }
-      }
-      if ($journalSpyware) {
-        $spywareImage = Get-DisableAntiSpywareImage
-        if (-not $spywareImage.Readable -or -not $spywareImage.Exists -or [int]$spywareImage.Value -ne 1) { $spywareFailed = $true }
-      }
-      if ($spywareFailed) {
-        $f += New-Part 'FAIL' 'a skipped or failed DisableAntiSpyware write is not a pass'
-      }
-      $shown = @($policyAfter | Where-Object { $_.Name -ne 'DisableAntiSpyware' })
-      if ($dwordBad.Count -gt 0) {
-        $f += New-Part 'FAIL' ("policy DWORDs are not all 1: {0}" -f (Format-PolicyImage $shown))
-      } elseif (-not $spywareFailed) {
-        $f += New-Part 'PASS' ("policy DWORDs are 1 ({0}). DisableAntiSpyware is not written and is not part of this pass." -f (Format-PolicyImage $shown))
-      }
+      if ($dwordBad.Count -eq 0) { $f += New-Part 'PASS' ("policy DWORDs are 1 ({0})" -f (Format-PolicyImage $policyAfter)) }
+      else { $f += New-Part 'FAIL' ("policy DWORDs are not all 1: {0}" -f (Format-PolicyImage $policyAfter)) }
     } elseif (Test-PolicyImageEqual $policyBefore $policyAfter) {
       $f += New-Part 'PASS' 'defender step did not leave new policy DWORDs'
     } else {

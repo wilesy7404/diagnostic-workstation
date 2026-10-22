@@ -191,6 +191,13 @@ function New-DefenderSnapshot($State) {
   }
 }
 
+function Get-LegacyDisableAntiSpywareCleanup($State) {
+  $path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
+  $observed = Get-DefenderPolicyObserved $State $path 'DisableAntiSpyware'
+  if (-not $observed -or -not [bool]$observed.exists) { return @() }
+  return @([pscustomobject]@{ kind = 'Remove-Policy'; path = $path; name = 'DisableAntiSpyware' })
+}
+
 function Get-DefenderDisableCommands($State) {
   $plan = Get-DefenderControlPlan
   $commands = @()
@@ -486,10 +493,17 @@ function Invoke-DefenderControl {
     return [pscustomobject]@{ status = 'tamper-blocked'; changed = $false; tamper = [string]$gate.tamper; pre = $read; post = $read }
   }
   $state = $gate.state
+  $legacyCleanup = @()
+  $legacyMarker = $null
   if ($Action -eq 'disable') {
     $snapshot = New-DefenderSnapshot $state
     Save-DefenderSnapshot $SnapshotPath $snapshot
     $commands = @(Get-DefenderDisableCommands $state)
+    $legacyMarker = Join-Path (Split-Path -Parent $SnapshotPath) 'legacy-disableantispyware.removed'
+    if (-not (Test-Path -LiteralPath $legacyMarker)) {
+      $legacyCleanup = @(Get-LegacyDisableAntiSpywareCleanup $state)
+      if ($legacyCleanup.Count -gt 0) { $commands = @($commands + $legacyCleanup) }
+    }
   } else {
     $saved = Read-DefenderSnapshot $SnapshotPath
     if (-not $saved) { $saved = New-DefenderDefaultEnableSnapshot $state }
@@ -522,6 +536,15 @@ function Invoke-DefenderControl {
     return [pscustomobject]@{ status = 'failed'; changed = $false; tamper = [string]$state.tamper; pre = $state; post = $state; error = [string]$result.error }
   }
   $post = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState }
+  if ($legacyCleanup.Count -gt 0 -and $legacyMarker) {
+    Add-MasterJournal $LogDirectory ([pscustomobject]@{
+      step = 'defender-legacy-disableantispyware'
+      action = 'remove'
+      name = 'DisableAntiSpyware'
+      path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
+    })
+    Write-Utf8NoBom $legacyMarker "removed`n"
+  }
   Add-MasterJournal $LogDirectory ([pscustomobject]@{
     step = 'defender-post'; action = $Action; status = $(if ($Action -eq 'disable') { 'disabled' } else { 'enabled' })
     commands = @($commands | ForEach-Object { @{ kind = [string]$_.kind; name = [string]$_.name; path = [string]$_.path; value = $_.value; startupType = [string]$_.startupType; status = [string]$_.status } })

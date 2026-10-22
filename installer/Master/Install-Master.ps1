@@ -16,7 +16,8 @@ param(
   [switch]$VerifyOnly,
   [switch]$AllowDowngrade,
   [switch]$Library,
-  [switch]$ElevatedRelaunch
+  [switch]$ElevatedRelaunch,
+  [switch]$AllowHarnessFailSwap
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,9 +32,9 @@ $masterDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ($Library -or $env:MASTER_INSTALLER_LIBRARY -eq '1') { return }
 
 # Library tests set DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP=1 to fail inside Install-VerifiedTree.
-# Delete it before elevation. RunAs does not pass the variable to the elevated process,
-# so a production run cannot arm that hook. The VM harness arms the same catch only
-# when fail-swap.marker exists in the harness work dir.
+# Delete it before elevation. RunAs does not pass the variable to the elevated process.
+# The fail-swap.marker pointer is read only when -AllowHarnessFailSwap is passed.
+# Production installs, including Setup.exe, do not pass that switch.
 [Environment]::SetEnvironmentVariable('DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP', $null, 'Process')
 
 if ([string]::IsNullOrWhiteSpace($Brand)) {
@@ -45,7 +46,7 @@ if (-not (Test-MasterHostWindows)) {
 Enter-MasterInstallerProcess -ScriptPath $MyInvocation.MyCommand.Path -Bound $PSBoundParameters -AlreadyRelaunched:$ElevatedRelaunch -SkipElevation:$VerifyOnly
 
 $repo = Find-MasterRepoRoot $masterDir
-$result = Install-ApprovedBrand -Brand $Brand -Channel $Channel -Tag $Tag -Source $Source -OfflineOnly:$OfflineOnly -VerifyOnly:$VerifyOnly -AllowDowngrade:$AllowDowngrade -ApplySecurity:(-not $VerifyOnly) -RepoRoot $repo
+$result = Install-ApprovedBrand -Brand $Brand -Channel $Channel -Tag $Tag -Source $Source -OfflineOnly:$OfflineOnly -VerifyOnly:$VerifyOnly -AllowDowngrade:$AllowDowngrade -ApplySecurity:(-not $VerifyOnly) -AllowHarnessFailSwap:$AllowHarnessFailSwap -RepoRoot $repo
 $result | Format-List | Out-String | Write-Output
 if ($result.installed) {
   # WorkstationManager.exe is left running so it keeps honoring the install lock.
