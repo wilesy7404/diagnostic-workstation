@@ -142,6 +142,33 @@ try {
     [System.IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), $utf8)
   }
 
+  function Write-SourceStub {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $lines = @(
+      '[CmdletBinding()]',
+      'param(',
+      '  [string]$Brand,',
+      '  [string]$Channel,',
+      '  [string]$Tag,',
+      '  [string]$Source,',
+      '  [switch]$OfflineOnly,',
+      '  [switch]$VerifyOnly,',
+      '  [switch]$AllowDowngrade,',
+      '  [switch]$Library,',
+      '  [switch]$ElevatedRelaunch',
+      ')',
+      '$out = [string]$env:DW_SETUP_SOURCE_OUT',
+      'if ([string]::IsNullOrWhiteSpace($out)) { exit 16 }',
+      '[System.IO.File]::WriteAllText($out, [string]$Source)',
+      'if (-not [System.IO.Path]::IsPathRooted([string]$Source)) { exit 14 }',
+      '$marker = Join-Path -Path $Source -ChildPath ''marker.txt''',
+      'if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { exit 15 }',
+      'exit 0'
+    )
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), $utf8)
+  }
+
   function Write-RawBytes {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][byte[]]$Bytes)
     $parent = Split-Path -Parent $Path
@@ -196,6 +223,14 @@ try {
     Update-StagedSetupExe -StageRoot $swapRoot -Nupkg $nupkg
     Write-RawBytes (Join-Path -Path $swapRoot -ChildPath 'desktop.ini') ([byte[]](59, 10))
     Write-ZoneIdentifier $swapRoot
+    $sourceCase = Join-Path -Path $caseRoot -ChildPath 'source-case'
+    $sourcePackage = Join-Path -Path $sourceCase -ChildPath 'package'
+    Copy-VerifiedTree $extracted $sourcePackage
+    Write-SourceStub (Join-PackageRelative $sourcePackage 'installer/Master/Install-Master.ps1')
+    Update-StagedSetupExe -StageRoot $sourcePackage -Nupkg $nupkg
+    Write-ZoneIdentifier $sourcePackage
+    $sourcePayload = Join-Path -Path $sourceCase -ChildPath 'payload'
+    Write-RawBytes (Join-Path -Path $sourcePayload -ChildPath 'marker.txt') ([byte[]](111, 107, 10))
 
     Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy Restricted -Force
     Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Restricted -Force
@@ -233,6 +268,27 @@ try {
     if ([int]$offlineRefuse.ExitCode -eq 0) { throw 'unapproved offline tag was accepted' }
     if ((@($offlineRefuse.Lines) -join "`n") -notmatch 'Unlisted extra file offline/not-a-tag/workstation\.zip') { throw 'unapproved offline tag was not refused' }
 
+    $sourceOut = Join-Path -Path $caseRoot -ChildPath 'source-out.txt'
+    $env:DW_SETUP_SOURCE_OUT = $sourceOut
+    $sourceInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $sourceInfo.FileName = Join-Path -Path $sourcePackage -ChildPath 'Setup.exe'
+    $sourceInfo.Arguments = '-Brand mercedes -Source payload'
+    $sourceInfo.UseShellExecute = $false
+    $sourceInfo.WorkingDirectory = $sourceCase
+    $sourceProc = New-Object System.Diagnostics.Process
+    $sourceProc.StartInfo = $sourceInfo
+    [void]$sourceProc.Start()
+    if (-not $sourceProc.WaitForExit(60000)) {
+      try { $sourceProc.Kill() } catch { }
+      throw 'relative -Source setup did not exit'
+    }
+    if ([int]$sourceProc.ExitCode -ne 0) { throw ("relative -Source returned {0}" -f $sourceProc.ExitCode) }
+    if (-not (Test-Path -LiteralPath $sourceOut)) { throw 'relative -Source was not recorded' }
+    $recordedSource = [System.IO.File]::ReadAllText($sourceOut).Trim()
+    $expectedSource = [System.IO.Path]::GetFullPath($sourcePayload)
+    if (-not $recordedSource.Equals($expectedSource, [System.StringComparison]::OrdinalIgnoreCase)) { throw "relative -Source resolved to $recordedSource" }
+    Remove-Item Env:DW_SETUP_SOURCE_OUT -ErrorAction SilentlyContinue
+
     $swapGo = Join-Path -Path $caseRoot -ChildPath 'swap-go.txt'
     $swapPath = Join-Path -Path $caseRoot -ChildPath 'swap-path.txt'
     $env:DW_SETUP_SWAP_GO = $swapGo
@@ -268,6 +324,8 @@ try {
       $sid = [string]$ace.IdentityReference.Value
       if ($sid -ne 'S-1-5-32-544' -and $sid -ne 'S-1-5-18') { throw "admin work directory allows $sid" }
     }
+    $ownerSid = [string]$workAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    if ($ownerSid -ne 'S-1-5-32-544') { throw "admin work directory owner is $ownerSid" }
     Write-InstallerExitStub (Join-PackageRelative $swapRoot 'installer/Master/Install-Master.ps1') 11
     [System.IO.File]::WriteAllText($swapGo, "go`n")
     if (-not $swapProc.WaitForExit(20000)) { throw 'swap setup did not exit' }
@@ -288,6 +346,10 @@ try {
     }
     Remove-Item Env:DW_SETUP_SWAP_GO -ErrorAction SilentlyContinue
     Remove-Item Env:DW_SETUP_SWAP_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:DW_SETUP_SOURCE_OUT -ErrorAction SilentlyContinue
+    if ($sourceProc -and -not $sourceProc.HasExited) {
+      try { $sourceProc.Kill() } catch { }
+    }
     if ($policySet) {
       foreach ($pair in @(
         @{ Scope = 'CurrentUser'; Value = $savedUser },

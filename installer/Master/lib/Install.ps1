@@ -692,7 +692,6 @@ function Install-ApprovedBrand {
   $releaseMeta = Read-BrandReleaseFile (Join-MasterPath $RepoRoot @('brands', $Brand, 'release.json')) $Brand $catalogBrand
   $release = Select-ApprovedRelease $catalogBrand $Brand $Channel $Tag
   $lockHeld = $false
-  $work = $null
   $staging = $null
   $payload = $null
   try {
@@ -702,12 +701,10 @@ function Install-ApprovedBrand {
       step = 'release-selected'; brand = $Brand; tag = [string]$release.tag; version = [string]$release.version; channel = $Channel
     })
 
-    $work = Join-Path -Path $InstallerData -ChildPath ('work-' + [guid]::NewGuid().ToString('n'))
-    New-Item -ItemType Directory -Force -Path $work | Out-Null
     $parent = Split-Path -Parent $root
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     $staging = Join-Path -Path $parent -ChildPath ('.staging-{0}-{1}' -f $Brand, [guid]::NewGuid().ToString('n'))
-    $payload = Receive-ApprovedPayload -Brand $Brand -Release $release -Source $Source -RepoRoot $RepoRoot -OfflineOnly:$OfflineOnly -WorkDirectory $work -Downloader $Downloader
+    $payload = Receive-ApprovedPayload -Brand $Brand -Release $release -Source $Source -RepoRoot $RepoRoot -OfflineOnly:$OfflineOnly -Downloader $Downloader
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'payload-acquired'; source = $payload.Source; brand = $Brand; tag = [string]$release.tag })
     $manifest = Open-VerifiedBundle -Brand $Brand -Release $release -ZipPath $payload.Zip -ManifestPath $payload.Manifest -Staging $staging
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'payload-verified'; brand = $Brand; tag = [string]$release.tag; sha256 = [string]$release.sha256; bytes = [int64]$release.bytes })
@@ -757,6 +754,8 @@ function Install-ApprovedBrand {
     # Remove-BrandInstallLock deletes the file only when its nonce is the one this run created.
     if ($lockHeld) { Remove-BrandInstallLock $root }
     if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
-    if ($work -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($payload -and -not [string]::IsNullOrWhiteSpace([string]$payload.DownloadRoot) -and (Test-Path -LiteralPath ([string]$payload.DownloadRoot))) {
+      Remove-Item -LiteralPath ([string]$payload.DownloadRoot) -Recurse -Force -ErrorAction SilentlyContinue
+    }
   }
 }
