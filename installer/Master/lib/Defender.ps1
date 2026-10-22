@@ -23,8 +23,12 @@ function Get-DefenderControlPlan {
   )
   $policyRoot = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
   $realtime = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection'
+  # DisableAntiSpyware is not written. The policy is deprecated and has been ignored
+  # since the August 2020 Defender update, and Tamper Protection reverts the DWORD.
+  # A missing value is the expected result, not a successful write and not a silent
+  # failure of this installer. Disable stays on Set-MpPreference plus DisableAntiVirus
+  # and the real-time policy DWORDs below. WinDefend and MDCoreSvc are never stopped.
   $policy = @(
-    @{ Path = $policyRoot; Name = 'DisableAntiSpyware' },
     @{ Path = $policyRoot; Name = 'DisableAntiVirus' },
     @{ Path = $realtime; Name = 'DisableRealtimeMonitoring' },
     @{ Path = $realtime; Name = 'DisableBehaviorMonitoring' },

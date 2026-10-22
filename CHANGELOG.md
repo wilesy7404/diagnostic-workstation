@@ -2,6 +2,10 @@
 
 BMW `1.0.2-beta.1` and Mercedes `0.1.3-beta.4` are pinned and not published. There is no tag and no GitHub release yet. Mercedes `0.1.3-beta.3` was built and then voided. It was never tagged or published, and it is not pinned.
 
+## Master installer
+
+`DisableAntiSpyware` is not written. The policy is deprecated and has been ignored since the August 2020 Defender update, and Tamper Protection reverts the DWORD. A missing value after install is expected. It is not a successful write and not a silent failure of this installer. Defender disable stays on `Set-MpPreference`, `DisableAntiVirus`, and the six real-time policy DWORDs. `WinDefend` and `MDCoreSvc` are not stopped.
+
 ## Mercedes-Benz 0.1.3-beta.4 (prerelease, catalog pin, not published) — 2026-10-18
 
 Source commit `2b138bf07b0b083615a76a7c16da5e27f16b75e8`. Workflow run [39091982618](https://github.com/wilesy7404/diagnostic-workstation/actions/runs/39091982618). Catalog serial 3. Not tagged and not published.

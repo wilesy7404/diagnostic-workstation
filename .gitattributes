@@ -11,3 +11,5 @@ manager/logos/*.png binary
 catalog/** -text
 releases/versions.lock.json -text
 tools/security/wub/tool-manifest.json -text
+# Offline payload bytes are staged as downloaded. core.autocrlf must not rewrite them.
+offline/** -text

@@ -27,12 +27,165 @@ function Test-SupervisorRelaunchBlocked {
   return (Test-Path -LiteralPath (Get-BrandInstallLockPath $Root))
 }
 
+# A live lock is an owner PID that is still alive and matches the recorded process
+# start time, or a live PID whose start time cannot be read while the nonce is present.
+# A dead PID, a reused PID, or a lock older than this timeout is stale and may be reclaimed.
+$script:BrandInstallLockTimeout = [timespan]::FromHours(2)
+$script:HarnessFailSwapToken = 'diagnostic-workstation-test-fail-swap'
+$script:HarnessFailSwapArmed = $false
+
+function Read-BrandInstallLockRecord([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+  try {
+    $text = [System.IO.File]::ReadAllText($Path)
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    if (-not $text.TrimStart().StartsWith('{')) { return $null }
+    return ($text | ConvertFrom-Json)
+  } catch {
+    return $null
+  }
+}
+
+function Get-BrandInstallLockAge($Record, [string]$Path) {
+  $created = $null
+  if ($Record -and $Record.createdUtc) {
+    try { $created = [datetimeoffset]::Parse([string]$Record.createdUtc) } catch { $created = $null }
+  }
+  if (-not $created -and (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    $created = [datetimeoffset](Get-Item -LiteralPath $Path).LastWriteTimeUtc
+  }
+  if (-not $created) { return [timespan]::MaxValue }
+  return ([datetimeoffset]::UtcNow - $created)
+}
+
+function Test-ProcessIdAlive([int]$ProcessId) {
+  if ($ProcessId -le 0) { return $false }
+  $found = @(Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+  return ($found.Count -gt 0)
+}
+
+function Get-ProcessStartUtc([int]$ProcessId) {
+  try {
+    $proc = Get-Process -Id $ProcessId -ErrorAction Stop
+    return $proc.StartTime.ToUniversalTime()
+  } catch {
+    return $null
+  }
+}
+
+function Test-StartTimesMatch($ActualUtc, [string]$Recorded) {
+  if ($null -eq $ActualUtc) { return $false }
+  if ([string]::IsNullOrWhiteSpace($Recorded)) { return $false }
+  try { $parsed = [datetimeoffset]::Parse($Recorded).UtcDateTime } catch { return $false }
+  $delta = ($ActualUtc - $parsed).TotalSeconds
+  if ($delta -lt 0) { $delta = -$delta }
+  return ($delta -lt 2)
+}
+
+function Get-BrandInstallLockState([string]$Path) {
+  $absent = [pscustomobject]@{ Status = 'absent'; Reason = ''; Record = $null }
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $absent }
+  $record = Read-BrandInstallLockRecord $Path
+  $age = Get-BrandInstallLockAge $record $Path
+  $timedOut = $age -gt $script:BrandInstallLockTimeout
+  if ($record -and $record.ownerPid) {
+    $ownerPid = 0
+    try { $ownerPid = [int]$record.ownerPid } catch { $ownerPid = 0 }
+    $start = $null
+    if ($ownerPid -gt 0) { $start = Get-ProcessStartUtc $ownerPid }
+    $startMatches = Test-StartTimesMatch $start ([string]$record.ownerStartUtc)
+    $nonce = [string]$record.nonce
+    $nonceMatches = (-not [string]::IsNullOrWhiteSpace($nonce)) -and ($nonce -ceq [string]$script:BrandInstallLockNonce)
+    if (($ownerPid -eq $PID) -and ($nonceMatches -or $startMatches)) {
+      return [pscustomobject]@{ Status = 'owned'; Reason = 'owner'; Record = $record }
+    }
+    if ($timedOut) {
+      return [pscustomobject]@{ Status = 'stale'; Reason = 'timeout'; Record = $record }
+    }
+    $alive = Test-ProcessIdAlive $ownerPid
+    if (-not $alive) {
+      return [pscustomobject]@{ Status = 'stale'; Reason = 'dead-pid'; Record = $record }
+    }
+    if ($startMatches) {
+      return [pscustomobject]@{ Status = 'live'; Reason = 'start-time'; Record = $record }
+    }
+    if (($null -eq $start) -and (-not [string]::IsNullOrWhiteSpace($nonce))) {
+      return [pscustomobject]@{ Status = 'live'; Reason = 'nonce'; Record = $record }
+    }
+    return [pscustomobject]@{ Status = 'stale'; Reason = 'pid-reused'; Record = $record }
+  }
+  if ($timedOut) {
+    return [pscustomobject]@{ Status = 'stale'; Reason = 'timeout'; Record = $record }
+  }
+  return [pscustomobject]@{ Status = 'live'; Reason = 'unverified'; Record = $record }
+}
+
+function Write-BrandInstallLockFile([string]$Path, [string]$Nonce) {
+  $start = Get-ProcessStartUtc $PID
+  $startText = ''
+  if ($start) { $startText = ([datetimeoffset]$start).ToString('o') }
+  $record = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $PID
+    ownerStartUtc = $startText
+    nonce = $Nonce
+    createdUtc = [datetimeoffset]::UtcNow.ToString('o')
+  }
+  Write-Utf8NoBom $Path (($record | ConvertTo-Json -Compress) + "`n")
+}
+
 function Set-BrandInstallLock {
-  param([Parameter(Mandatory = $true)][string]$Root)
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [string]$LogDirectory
+  )
   if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $null }
   $path = Get-BrandInstallLockPath $Root
-  Write-Utf8NoBom $path ("master-installer " + [datetimeoffset]::UtcNow.ToString('o') + "`n")
+  $state = Get-BrandInstallLockState $path
+  if ($state.Status -eq 'live') {
+    $owner = 'owner cannot be verified'
+    if ($state.Record -and $state.Record.ownerPid) { $owner = 'process ' + [string]$state.Record.ownerPid }
+    throw "Another install already holds install-in-progress.lock for this folder ($owner). Nothing was installed."
+  }
+  if ($state.Status -eq 'stale') {
+    Remove-Item -LiteralPath $path -Force
+    if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) {
+      $ownerPid = $null
+      if ($state.Record) { $ownerPid = $state.Record.ownerPid }
+      Add-MasterJournal $LogDirectory ([pscustomobject]@{
+        step = 'install-lock-reclaimed'
+        reason = [string]$state.Reason
+        ownerPid = $ownerPid
+        path = $path
+      })
+    }
+  }
+  $nonce = ''
+  if ($state.Status -eq 'owned' -and $state.Record -and -not [string]::IsNullOrWhiteSpace([string]$state.Record.nonce)) {
+    $nonce = [string]$state.Record.nonce
+  } else {
+    $nonce = [guid]::NewGuid().ToString('n')
+  }
+  $script:BrandInstallLockNonce = $nonce
+  Write-BrandInstallLockFile $path $nonce
   return $path
+}
+
+function Test-HarnessFailSwapMarker {
+  param([string]$InstallerData)
+  if ([string]::IsNullOrWhiteSpace($InstallerData)) { return $false }
+  $pointerPath = Join-Path -Path $InstallerData -ChildPath 'fail-swap.location'
+  if (-not (Test-Path -LiteralPath $pointerPath -PathType Leaf)) { return $false }
+  $markerPath = ([System.IO.File]::ReadAllText($pointerPath)).Trim()
+  if ([string]::IsNullOrWhiteSpace($markerPath)) { return $false }
+  if ((Split-Path -Leaf $markerPath) -cne 'fail-swap.marker') { return $false }
+  if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { return $false }
+  $markerFull = [System.IO.Path]::GetFullPath($markerPath)
+  $dataFull = [System.IO.Path]::GetFullPath($InstallerData)
+  if ($markerFull.StartsWith($dataFull, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+  $token = ([System.IO.File]::ReadAllText($markerPath)).Trim()
+  if ($token -cne $script:HarnessFailSwapToken) { return $false }
+  return $true
 }
 
 function Remove-BrandInstallLock {
@@ -236,8 +389,10 @@ function Install-VerifiedTree {
   if ($existed) { Copy-PreservedTree $Root $Staging }
   if ($existed) { Rename-Item -LiteralPath $Root -NewName $prevLeaf }
   try {
-    # Library test hook. Install-Master.ps1 deletes this variable before elevation, so a production run cannot set it.
-    if ($env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP -eq '1') {
+    # Library tests set the env var in-process. Install-Master.ps1 clears it before elevation.
+    # The VM harness arms the same catch only when fail-swap.marker exists in the harness
+    # work dir. A production run has neither, so this path cannot fire there.
+    if (($env:DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP -eq '1') -or $script:HarnessFailSwapArmed) {
       throw 'test-only failure during install swap'
     }
     Rename-Item -LiteralPath $Staging -NewName $leaf
@@ -316,6 +471,7 @@ function Install-ApprovedBrand {
   New-Item -ItemType Directory -Force -Path $InstallerData, $LogDirectory | Out-Null
   $progress = Join-Path -Path $InstallerData -ChildPath 'install-in-progress.json'
   Repair-InterruptedInstall $progress
+  $script:HarnessFailSwapArmed = Test-HarnessFailSwapMarker $InstallerData
 
   $catalogPath = Join-MasterPath $RepoRoot @('catalog', 'catalog.json')
   $pinPath = Join-MasterPath $RepoRoot @('catalog', 'catalog.sha256')
@@ -363,13 +519,13 @@ function Install-ApprovedBrand {
     # Hold the lock before the rename. WorkstationManager will not start a new PowerShell
     # while it exists. The renamed previous folder takes this copy with it, so the new
     # root gets a fresh lock before Windows Update or Defender run.
-    $heldLock = Set-BrandInstallLock $root
+    $heldLock = Set-BrandInstallLock -Root $root -LogDirectory $LogDirectory
     if (-not [string]::IsNullOrWhiteSpace([string]$heldLock)) { $lockHeld = $true }
     $stopped = @()
     if (-not $AllowUncheckedProcesses) { $stopped = @(Stop-BrandSupervisorProcesses -Root $root) }
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'supervisor-held'; brand = $Brand; stopped = @($stopped) })
     Install-VerifiedTree -Staging $staging -Root $root -Brand $Brand -Tag ([string]$release.tag) -Version ([string]$release.version) -ZipSha256 ([string]$release.sha256) -ProgressPath $progress -AllowDowngrade:$AllowDowngrade
-    $heldLock = Set-BrandInstallLock $root
+    $heldLock = Set-BrandInstallLock -Root $root -LogDirectory $LogDirectory
     if (-not [string]::IsNullOrWhiteSpace([string]$heldLock)) { $lockHeld = $true }
     if (-not $AllowUncheckedProcesses) { Stop-BrandSupervisorProcesses -Root $root | Out-Null }
     Write-TrustState $trust ([int]$loaded.Catalog.catalogSerial) $loaded.Digest

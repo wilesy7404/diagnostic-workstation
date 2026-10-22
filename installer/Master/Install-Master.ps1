@@ -31,7 +31,9 @@ $masterDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ($Library -or $env:MASTER_INSTALLER_LIBRARY -eq '1') { return }
 
 # Library tests set DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP=1 to fail inside Install-VerifiedTree.
-# Delete it before elevation so this process and the relaunch cannot arm that hook.
+# Delete it before elevation. RunAs does not pass the variable to the elevated process,
+# so a production run cannot arm that hook. The VM harness arms the same catch only
+# when fail-swap.marker exists in the harness work dir.
 [Environment]::SetEnvironmentVariable('DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP', $null, 'Process')
 
 if ([string]::IsNullOrWhiteSpace($Brand)) {
@@ -45,6 +47,13 @@ Enter-MasterInstallerProcess -ScriptPath $MyInvocation.MyCommand.Path -Bound $PS
 $repo = Find-MasterRepoRoot $masterDir
 $result = Install-ApprovedBrand -Brand $Brand -Channel $Channel -Tag $Tag -Source $Source -OfflineOnly:$OfflineOnly -VerifyOnly:$VerifyOnly -AllowDowngrade:$AllowDowngrade -ApplySecurity:(-not $VerifyOnly) -RepoRoot $repo
 $result | Format-List | Out-String | Write-Output
+if ($result.installed) {
+  # WorkstationManager.exe is left running so it keeps honoring the install lock.
+  # The process image stays the previous exe until that process starts again.
+  # Restarting it from this elevated installer would open the supervisor UI and
+  # race the lock. The operator restarts it after the install finishes.
+  Write-Output 'Restart required. The installer leaves the running supervisor in place so the install lock is honored. The new WorkstationManager.exe loads only after that process is restarted.'
+}
 if ($VerifyOnly) { return }
 if ([string]$result.windowsUpdate -ne 'disabled') {
   Write-Output 'Windows Update was not disabled. The brand files were left in place. Shell startup was not changed.'
