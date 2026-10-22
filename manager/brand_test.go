@@ -22,6 +22,29 @@ func TestBrandInstallError(t *testing.T) {
 	}
 }
 
+func TestInstallPromptTitle(t *testing.T) {
+	title, err := installPromptTitle("Mercedes-Benz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title != "Install Mercedes-Benz" {
+		t.Fatalf("title = %q", title)
+	}
+	title, err = installPromptTitle(" ")
+	if err == nil {
+		t.Fatal("blank display name was accepted")
+	}
+	if title != "" {
+		t.Fatalf("blank title = %q", title)
+	}
+	if unresolvedBrandTitle == "Install " || strings.HasPrefix(unresolvedBrandMessage, "Install ") {
+		t.Fatal("unresolved brand still uses a blank install prompt")
+	}
+	if !strings.Contains(unresolvedBrandMessage, "nothing was installed") {
+		t.Fatal(unresolvedBrandMessage)
+	}
+}
+
 func TestKeepBrandIDs(t *testing.T) {
 	ids := []string{"bmw", "mercedes", "ford"}
 	got := keepBrandIDs(ids, "mercedes")

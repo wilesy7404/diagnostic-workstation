@@ -4,7 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
+
+const unresolvedBrandTitle = "Brand not resolved"
+const unresolvedBrandMessage = "No manufacturer was resolved. This WorkstationManager build has no matching brand, so nothing was installed."
 
 // embeddedBrand is the manufacturer whose logo this exe was built with.
 // scripts/build-workstation-manager.py sets it with -ldflags -X.
@@ -23,6 +27,16 @@ func brandInstallError(embedded, selected string) error {
 		return fmt.Errorf("this WorkstationManager build includes only the %s logo", embedded)
 	}
 	return nil
+}
+
+// installPromptTitle is the install confirmation title for a resolved manufacturer.
+// An empty display name used to become the blank title "Install ". That title is refused.
+func installPromptTitle(displayName string) (string, error) {
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		return "", errors.New("no brand was resolved")
+	}
+	return "Install " + name, nil
 }
 
 // keepBrandIDs limits the GUI manufacturer list to the embedded brand.

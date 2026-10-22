@@ -19,6 +19,9 @@ jobs:
           $harness = Get-Item -LiteralPath 'scripts/Invoke-VmInstallTest.ps1'
           $files += $harness
           $files += (Get-Item -LiteralPath 'scripts/Test-WorkflowPowerShell.ps1')
+          $files += (Get-Item -LiteralPath 'scripts/Build-MasterInstallerPackage.ps1')
+          $files += (Get-Item -LiteralPath 'scripts/Test-SetupPackage.ps1')
+          $files += (Get-Item -LiteralPath 'scripts/Test-MasterInstallerPackage.ps1')
           if ($files.Count -eq 0) { throw 'No PowerShell files found' }
           foreach ($file in $files) {
             $tokens = $null
@@ -142,6 +145,7 @@ jobs:
         run: |
           set -euo pipefail
           pwsh -NoProfile -File scripts/Test-MasterInstaller.ps1
+          pwsh -NoProfile -File scripts/Test-SetupPackage.ps1
           pwsh -NoProfile -File scripts/Test-MercedesUpdater.ps1
           pwsh -NoProfile -File scripts/Test-BmwBundle.ps1
           pwsh -NoProfile -File scripts/Test-WorkstationManagerLogo.ps1
