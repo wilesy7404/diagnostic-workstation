@@ -29,11 +29,14 @@ function Test-SupervisorRelaunchBlocked {
 
 # A live lock is an owner PID that is still alive and matches the recorded process
 # start time, or a live PID whose start time cannot be read while the nonce is present.
+# A blank recorded start time cannot prove the PID was reused, so that lock follows age.
 # Liveness is checked before age. A live owner older than the timeout is still live.
-# A dead PID or a reused PID is stale. Age applies only to a legacy lock with no owner PID.
+# A dead PID or a reused PID is stale. Age applies to a legacy lock with no owner PID
+# and to a live PID whose recorded start time is missing.
 $script:BrandInstallLockTimeout = [timespan]::FromHours(2)
 $script:HarnessFailSwapToken = 'diagnostic-workstation-test-fail-swap'
 $script:HarnessFailSwapArmed = $false
+$script:BrandInstallLockFailWrite = $false
 
 function Read-BrandInstallLockRecord([string]$Path) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
@@ -47,10 +50,33 @@ function Read-BrandInstallLockRecord([string]$Path) {
   }
 }
 
+function Test-LockTimestampMissing($Value) {
+  if ($null -eq $Value) { return $true }
+  if ($Value -is [datetime]) { return $false }
+  if ($Value -is [datetimeoffset]) { return $false }
+  return [string]::IsNullOrWhiteSpace([string]$Value)
+}
+
+function ConvertTo-LockUtcDateTime($Value) {
+  if ($null -eq $Value) { return $null }
+  if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+  if ($Value -is [datetimeoffset]) { return $Value.UtcDateTime }
+  $text = [string]$Value
+  if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+  $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+  $parsed = [datetime]::Parse($text, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]$styles)
+  return $parsed.ToUniversalTime()
+}
+
 function Get-BrandInstallLockAge($Record, [string]$Path) {
   $created = $null
-  if ($Record -and $Record.createdUtc) {
-    try { $created = [datetimeoffset]::Parse([string]$Record.createdUtc) } catch { $created = $null }
+  if ($Record -and -not (Test-LockTimestampMissing $Record.createdUtc)) {
+    try {
+      $utc = ConvertTo-LockUtcDateTime $Record.createdUtc
+      if ($null -ne $utc) {
+        $created = [datetimeoffset]::new([datetime]::SpecifyKind($utc, [System.DateTimeKind]::Utc))
+      }
+    } catch { $created = $null }
   }
   if (-not $created -and (Test-Path -LiteralPath $Path -PathType Leaf)) {
     $created = [datetimeoffset](Get-Item -LiteralPath $Path).LastWriteTimeUtc
@@ -74,10 +100,11 @@ function Get-ProcessStartUtc([int]$ProcessId) {
   }
 }
 
-function Test-StartTimesMatch($ActualUtc, [string]$Recorded) {
+function Test-StartTimesMatch($ActualUtc, $Recorded) {
   if ($null -eq $ActualUtc) { return $false }
-  if ([string]::IsNullOrWhiteSpace($Recorded)) { return $false }
-  try { $parsed = [datetimeoffset]::Parse($Recorded).UtcDateTime } catch { return $false }
+  if (Test-LockTimestampMissing $Recorded) { return $false }
+  try { $parsed = ConvertTo-LockUtcDateTime $Recorded } catch { return $false }
+  if ($null -eq $parsed) { return $false }
   $delta = ($ActualUtc - $parsed).TotalSeconds
   if ($delta -lt 0) { $delta = -$delta }
   return ($delta -lt 2)
@@ -92,7 +119,9 @@ function Get-BrandInstallLockState([string]$Path) {
     try { $ownerPid = [int]$record.ownerPid } catch { $ownerPid = 0 }
     if ($ownerPid -gt 0) {
       $start = Get-ProcessStartUtc $ownerPid
-      $startMatches = Test-StartTimesMatch $start ([string]$record.ownerStartUtc)
+      $recordedMissing = Test-LockTimestampMissing $record.ownerStartUtc
+      $startMatches = $false
+      if (-not $recordedMissing) { $startMatches = Test-StartTimesMatch $start $record.ownerStartUtc }
       $nonce = [string]$record.nonce
       $nonceMatches = (-not [string]::IsNullOrWhiteSpace($nonce)) -and ($nonce -ceq [string]$script:BrandInstallLockNonce)
       if (($ownerPid -eq $PID) -and ($nonceMatches -or $startMatches)) {
@@ -106,9 +135,12 @@ function Get-BrandInstallLockState([string]$Path) {
         if (($null -eq $start) -and (-not [string]::IsNullOrWhiteSpace($nonce))) {
           return [pscustomobject]@{ Status = 'live'; Reason = 'nonce'; Record = $record }
         }
-        return [pscustomobject]@{ Status = 'stale'; Reason = 'pid-reused'; Record = $record }
+        if (-not $recordedMissing) {
+          return [pscustomobject]@{ Status = 'stale'; Reason = 'pid-reused'; Record = $record }
+        }
+      } else {
+        return [pscustomobject]@{ Status = 'stale'; Reason = 'dead-pid'; Record = $record }
       }
-      return [pscustomobject]@{ Status = 'stale'; Reason = 'dead-pid'; Record = $record }
     }
   }
   $age = Get-BrandInstallLockAge $record $Path
@@ -136,16 +168,30 @@ function New-BrandInstallLockFile([string]$Path, [string]$Nonce) {
   $utf8 = New-Object System.Text.UTF8Encoding $false
   $bytes = $utf8.GetBytes((Get-BrandInstallLockText $Nonce))
   $stream = $null
+  $created = $false
   try {
     $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    $created = $true
   } catch [System.IO.IOException] {
     if (Test-Path -LiteralPath $Path) { return $false }
     throw
   }
+  $failed = $false
+  $writeError = $null
   try {
+    if ($script:BrandInstallLockFailWrite) { throw (New-Object System.IO.IOException 'lock write failed') }
     $stream.Write($bytes, 0, $bytes.Length)
+  } catch {
+    $failed = $true
+    $writeError = $_
   } finally {
-    $stream.Dispose()
+    if ($stream) { $stream.Dispose() }
+  }
+  if ($failed) {
+    if ($created) {
+      try { [System.IO.File]::Delete($Path) } catch { }
+    }
+    throw $writeError
   }
   return $true
 }
@@ -162,9 +208,54 @@ function Move-BrandInstallLockAside([string]$Path) {
 
 function Restore-MovedLock([string]$Claim, [string]$Path) {
   if ([string]::IsNullOrWhiteSpace($Claim)) { return }
-  if (-not (Test-Path -LiteralPath $Claim)) { return }
-  if (Test-Path -LiteralPath $Path) { return }
-  try { [System.IO.File]::Move($Claim, $Path) } catch { }
+  $attempt = 0
+  while ($attempt -lt 3) {
+    $attempt++
+    if (-not (Test-Path -LiteralPath $Claim -PathType Leaf)) { return }
+    try {
+      [System.IO.File]::Move($Claim, $Path)
+      return
+    } catch {
+      $length = -1
+      try {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+          $length = [int64](Get-Item -LiteralPath $Path).Length
+        }
+      } catch {
+        $length = -1
+      }
+      if ($length -eq 0) {
+        try { [System.IO.File]::Delete($Path) } catch { }
+        continue
+      }
+      return
+    }
+  }
+}
+
+function Remove-StaleLockSidecars([string]$Path) {
+  $directory = Split-Path -Parent $Path
+  if ([string]::IsNullOrWhiteSpace($directory)) { return }
+  if (-not (Test-Path -LiteralPath $directory -PathType Container)) { return }
+  $leaf = Split-Path -Leaf $Path
+  $cutoff = [datetime]::UtcNow.Add(-$script:BrandInstallLockTimeout)
+  $prefixes = @(
+    ($leaf + '.reclaim-'),
+    ($leaf + '.release-'),
+    ($leaf + '.refresh-')
+  )
+  foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force -File -ErrorAction SilentlyContinue)) {
+    $matched = $false
+    foreach ($prefix in $prefixes) {
+      if ($item.Name.StartsWith($prefix, [System.StringComparison]::Ordinal)) { $matched = $true }
+    }
+    if (-not $matched) { continue }
+    try {
+      if ($item.LastWriteTimeUtc -lt $cutoff) {
+        Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+      }
+    } catch { }
+  }
 }
 
 function Update-OwnedBrandInstallLock([string]$Path, [string]$Nonce, [string]$ExpectedNonce) {
@@ -197,6 +288,7 @@ function Set-BrandInstallLock {
   )
   if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $null }
   $path = Get-BrandInstallLockPath $Root
+  Remove-StaleLockSidecars $path
   $attempt = 0
   while ($attempt -lt 8) {
     $attempt++
@@ -290,9 +382,10 @@ function Set-HarnessFailSwapArmed {
 function Remove-BrandInstallLock {
   param([string]$Root)
   if ([string]::IsNullOrWhiteSpace($Root)) { return }
+  $path = Get-BrandInstallLockPath $Root
+  Remove-StaleLockSidecars $path
   $nonce = [string]$script:BrandInstallLockNonce
   if ([string]::IsNullOrWhiteSpace($nonce)) { return }
-  $path = Get-BrandInstallLockPath $Root
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
   $record = Read-BrandInstallLockRecord $path
   if (-not $record -or [string]$record.nonce -cne $nonce) { return }

@@ -4,7 +4,7 @@ BMW `1.0.2-beta.1` and Mercedes `0.1.3-beta.4` are pinned and were published as 
 
 ## Master installer
 
-`DisableAntiSpyware` is not written. The policy is deprecated and has been ignored since the August 2020 Defender update, and Tamper Protection reverts the DWORD. A missing value after install is expected. It is not a successful write and not a silent failure of this installer. A leftover `DisableAntiSpyware` DWORD from an older build is removed once, and that removal is journaled as `defender-legacy-disableantispyware`. Defender disable stays on `Set-MpPreference`, `DisableAntiVirus`, and the six real-time policy DWORDs. `WinDefend` and `MDCoreSvc` are not stopped.
+`DisableAntiSpyware` is not written. The policy is deprecated and has been ignored since the August 2020 Defender update, and Tamper Protection reverts the DWORD. A missing value after install is expected. It is not a successful write and not a silent failure of this installer. A leftover `DisableAntiSpyware` DWORD from an older build is removed once, and that removal is journaled as `defender-legacy-disableantispyware`. The live reader reads that value from `HKLM\SOFTWARE\Policies\Microsoft\Windows Defender` itself. Lock timestamps are read as UTC. A blank owner start time follows lock age. A failed lock write deletes the empty file, and reclaim sidecars older than two hours are removed. Defender disable stays on `Set-MpPreference`, `DisableAntiVirus`, and the six real-time policy DWORDs. `WinDefend` and `MDCoreSvc` are not stopped.
 
 ## Mercedes-Benz 0.1.3-beta.4 (prerelease, catalog pin) — 2026-10-18
 

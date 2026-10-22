@@ -146,3 +146,6 @@ jobs:
           pwsh -NoProfile -File scripts/Test-BmwBundle.ps1
           pwsh -NoProfile -File scripts/Test-WorkstationManagerLogo.ps1
           (cd manager && go test -count=1 .)
+      - name: Test master installer outside UTC
+        shell: bash
+        run: TZ=America/Los_Angeles pwsh -NoProfile -File scripts/Test-MasterInstaller.ps1

@@ -497,7 +497,88 @@ try {
   Assert-True (-not [string]::IsNullOrWhiteSpace([string]$deadHeld)) 'a dead-pid lock was not reclaimed'
   $deadJournal = [System.IO.File]::ReadAllText((Join-Path $deadLogs 'install-journal.log'))
   Assert-True ($deadJournal.Contains('"step":"install-lock-reclaimed"') -and $deadJournal.Contains('"reason":"dead-pid"')) 'dead-pid reclaim was not logged'
+  $blankRoot = Join-Path $temp 'blank-start-lock-root'
+  New-Item -ItemType Directory -Path $blankRoot | Out-Null
+  $blankRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $sleeper.Id
+    ownerStartUtc = ''
+    nonce = ('34' * 16)
+    createdUtc = [datetimeoffset]::UtcNow.ToString('o')
+  }
+  $blankLockPath = Join-Path $blankRoot 'install-in-progress.lock'
+  Write-Utf8NoBom $blankLockPath (($blankRecord | ConvertTo-Json -Compress) + "`n")
+  $blankBefore = [System.IO.File]::ReadAllBytes($blankLockPath)
+  $blankLogs = Join-Path $temp 'blank-start-lock-logs'
+  Assert-Throws { Set-BrandInstallLock -Root $blankRoot -LogDirectory $blankLogs } 'already holds install-in-progress.lock'
+  $blankAfter = [System.IO.File]::ReadAllBytes($blankLockPath)
+  Assert-True ((Get-BytesSha256 $blankBefore) -eq (Get-BytesSha256 $blankAfter)) 'a live lock with a blank owner start was reclaimed'
+  $blankOldRoot = Join-Path $temp 'blank-start-old-lock-root'
+  New-Item -ItemType Directory -Path $blankOldRoot | Out-Null
+  $blankOldRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $sleeper.Id
+    ownerStartUtc = ''
+    nonce = ('56' * 16)
+    createdUtc = '2020-01-01T00:00:00.0000000Z'
+  }
+  Write-Utf8NoBom (Join-Path $blankOldRoot 'install-in-progress.lock') (($blankOldRecord | ConvertTo-Json -Compress) + "`n")
+  $blankOldLogs = Join-Path $temp 'blank-start-old-lock-logs'
+  $blankOldHeld = Set-BrandInstallLock -Root $blankOldRoot -LogDirectory $blankOldLogs
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$blankOldHeld)) 'an old lock with a blank owner start was not reclaimed'
+  $blankOldJournal = [System.IO.File]::ReadAllText((Join-Path $blankOldLogs 'install-journal.log'))
+  Assert-True ($blankOldJournal.Contains('"step":"install-lock-reclaimed"') -and $blankOldJournal.Contains('"reason":"timeout"')) 'blank owner start did not fall back to age'
   if ($sleeper -and -not $sleeper.HasExited) { Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue }
+
+  $failWriteRoot = Join-Path $temp 'fail-write-lock-root'
+  New-Item -ItemType Directory -Path $failWriteRoot | Out-Null
+  $failWritePath = Join-Path $failWriteRoot 'install-in-progress.lock'
+  $script:BrandInstallLockFailWrite = $true
+  Assert-Throws { New-BrandInstallLockFile $failWritePath ('aa' * 16) } 'lock write failed'
+  $script:BrandInstallLockFailWrite = $false
+  Assert-True (-not (Test-Path -LiteralPath $failWritePath)) 'a failed lock write left an empty lock'
+  $failWriteHeld = Set-BrandInstallLock $failWriteRoot
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$failWriteHeld)) 'install stayed blocked after a failed lock write'
+  Remove-BrandInstallLock $failWriteRoot
+
+  $restoreRoot = Join-Path $temp 'restore-lock-root'
+  New-Item -ItemType Directory -Path $restoreRoot | Out-Null
+  $restoreLock = Join-Path $restoreRoot 'install-in-progress.lock'
+  $restoreClaim = $restoreLock + '.reclaim-empty'
+  Write-Utf8NoBom $restoreClaim "claim-bytes`n"
+  [System.IO.File]::WriteAllBytes($restoreLock, (New-Object byte[] 0))
+  Restore-MovedLock $restoreClaim $restoreLock
+  Assert-True (([System.IO.File]::ReadAllText($restoreLock)) -eq "claim-bytes`n") 'an empty lock blocked restore of the moved bytes'
+  Assert-True (-not (Test-Path -LiteralPath $restoreClaim)) 'the claim remained after restore onto an empty lock'
+  $keptClaim = $restoreLock + '.reclaim-kept'
+  Write-Utf8NoBom $restoreLock 'winner-bytes'
+  Write-Utf8NoBom $keptClaim 'stolen-bytes'
+  Restore-MovedLock $keptClaim $restoreLock
+  Assert-True (([System.IO.File]::ReadAllText($restoreLock)) -eq 'winner-bytes') 'restore replaced a non-empty lock'
+  Assert-True (([System.IO.File]::ReadAllText($keptClaim)) -eq 'stolen-bytes') 'a blocked restore deleted the claim'
+
+  $sweepRoot = Join-Path $temp 'sweep-lock-root'
+  New-Item -ItemType Directory -Path $sweepRoot | Out-Null
+  $sweepLock = Join-Path $sweepRoot 'install-in-progress.lock'
+  $staleClaim = $sweepLock + '.reclaim-stale'
+  $staleRefresh = $sweepLock + '.refresh-stale'
+  $staleBak = $sweepLock + '.refresh-bak'
+  $freshRelease = $sweepLock + '.release-fresh'
+  Write-Utf8NoBom $staleClaim 'stale'
+  Write-Utf8NoBom $staleRefresh 'stale-refresh'
+  Write-Utf8NoBom $staleBak 'bak'
+  Write-Utf8NoBom $freshRelease 'fresh'
+  $staleStamp = [datetime]::UtcNow.AddHours(-3)
+  (Get-Item -LiteralPath $staleClaim).LastWriteTimeUtc = $staleStamp
+  (Get-Item -LiteralPath $staleRefresh).LastWriteTimeUtc = $staleStamp
+  (Get-Item -LiteralPath $staleBak).LastWriteTimeUtc = $staleStamp
+  $sweepHeld = Set-BrandInstallLock $sweepRoot
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$sweepHeld)) 'sidecar sweep blocked a new lock'
+  Assert-True (-not (Test-Path -LiteralPath $staleClaim)) 'a stale reclaim file was left behind'
+  Assert-True (-not (Test-Path -LiteralPath $staleRefresh)) 'a stale refresh file was left behind'
+  Assert-True (-not (Test-Path -LiteralPath $staleBak)) 'a stale refresh backup was left behind'
+  Assert-True (Test-Path -LiteralPath $freshRelease) 'a fresh release file was deleted'
+  Remove-BrandInstallLock $sweepRoot
 
   $supervisorRoot = Join-Path $temp 'supervisor-root'
   $stoppedIds = New-Object System.Collections.Generic.List[int]
@@ -881,15 +962,18 @@ try {
   $legacyCommands = New-Object System.Collections.Generic.List[object]
   $legacyLogs = Join-Path $temp 'legacy-spyware-logs'
   New-Item -ItemType Directory -Force -Path $legacyLogs | Out-Null
-  $legacyState = New-TestDefenderState 'off'
-  $legacyState.policies = @([pscustomobject]@{
-    path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
-    name = 'DisableAntiSpyware'
-    exists = $true
-    value = 1
-  })
+  $legacyRegistry = {
+    param($Path, $Name)
+    if ($Path -eq 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -and $Name -eq 'DisableAntiSpyware') {
+      return [pscustomobject]@{ DisableAntiSpyware = 1 }
+    }
+    throw "registry value not present: $Path $Name"
+  }
+  $legacyLive = Get-DefenderLiveState -RegistryReader $legacyRegistry
+  $legacyObserved = @($legacyLive.policies | Where-Object { $_.name -eq 'DisableAntiSpyware' -and $_.path -eq 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' })
+  Assert-True ($legacyObserved.Count -eq 1 -and [bool]$legacyObserved[0].exists -and [int]$legacyObserved[0].value -eq 1) 'live reader did not see DisableAntiSpyware'
   $legacySnap = Join-Path $temp 'legacy-spyware.json'
-  $legacy = Invoke-DefenderControl -Action 'disable' -LogDirectory $legacyLogs -SnapshotPath $legacySnap -ReadState { $legacyState } -CommandSink { param($Command) $legacyCommands.Add($Command) } -TamperPrompt { param($Message) return $false }
+  $legacy = Invoke-DefenderControl -Action 'disable' -LogDirectory $legacyLogs -SnapshotPath $legacySnap -RegistryReader $legacyRegistry -CommandSink { param($Command) $legacyCommands.Add($Command) } -TamperPrompt { param($Message) return $false }
   Assert-True ($legacy.status -eq 'disabled') 'legacy DisableAntiSpyware cleanup did not finish disable'
   Assert-True (@($legacyCommands | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 1) 'legacy DisableAntiSpyware was not removed'
   Assert-True (@($legacyCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 0) 'legacy cleanup wrote DisableAntiSpyware'
@@ -898,7 +982,7 @@ try {
   Assert-True ($legacyJournal.Contains('"step":"defender-legacy-disableantispyware"')) 'legacy DisableAntiSpyware cleanup was not journaled'
   Assert-True (Test-Path -LiteralPath (Join-Path $temp 'legacy-disableantispyware.removed')) 'legacy cleanup marker was not written'
   $legacyAgain = New-Object System.Collections.Generic.List[object]
-  $legacyRepeat = Invoke-DefenderControl -Action 'disable' -LogDirectory $legacyLogs -SnapshotPath $legacySnap -ReadState { $legacyState } -CommandSink { param($Command) $legacyAgain.Add($Command) } -TamperPrompt { param($Message) return $false }
+  $legacyRepeat = Invoke-DefenderControl -Action 'disable' -LogDirectory $legacyLogs -SnapshotPath $legacySnap -RegistryReader $legacyRegistry -CommandSink { param($Command) $legacyAgain.Add($Command) } -TamperPrompt { param($Message) return $false }
   Assert-True ($legacyRepeat.status -eq 'disabled') 'second disable failed after the legacy cleanup'
   Assert-True (@($legacyAgain | Where-Object { $_.name -eq 'DisableAntiSpyware' }).Count -eq 0) 'legacy DisableAntiSpyware cleanup ran twice'
   Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.name -eq 'WinDefend' -or $_.name -eq 'WdNisSvc' -or $_.name -eq 'MDCoreSvc' }).Count -eq 0) 'disable issued a Defender service command'

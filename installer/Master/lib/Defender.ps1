@@ -91,7 +91,18 @@ function New-DefenderDefaultEnableSnapshot($LiveState) {
   }
 }
 
+function Read-DefenderRegistryValue {
+  param(
+    [string]$Path,
+    [string]$Name,
+    [scriptblock]$RegistryReader
+  )
+  if ($RegistryReader) { return (& $RegistryReader $Path $Name) }
+  return (Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop)
+}
+
 function Get-DefenderLiveState {
+  param([scriptblock]$RegistryReader)
   $plan = Get-DefenderControlPlan
   $preferences = @{}
   $mp = $null
@@ -113,7 +124,7 @@ function Get-DefenderLiveState {
   } catch { }
   $registryTamper = 'unknown'
   try {
-    $value = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -Name TamperProtection -ErrorAction Stop
+    $value = Read-DefenderRegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -Name 'TamperProtection' -RegistryReader $RegistryReader
     if ([int]$value.TamperProtection -eq 1) { $registryTamper = 'on' }
     elseif ([int]$value.TamperProtection -eq 0) { $registryTamper = 'off' }
   } catch { }
@@ -124,11 +135,28 @@ function Get-DefenderLiveState {
     $exists = $false
     $current = $null
     try {
-      $property = Get-ItemProperty -Path $item.Path -Name $item.Name -ErrorAction Stop
+      $property = Read-DefenderRegistryValue -Path $item.Path -Name $item.Name -RegistryReader $RegistryReader
       $exists = $true
       $current = $property.($item.Name)
     } catch { }
     $policies += [pscustomobject]@{ path = $item.Path; name = $item.Name; exists = $exists; value = $current }
+  }
+  # DisableAntiSpyware is not in the plan. Read the legacy DWORD itself so a leftover value is still observed.
+  $legacyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
+  $legacyName = 'DisableAntiSpyware'
+  $legacySeen = $false
+  foreach ($existing in @($policies)) {
+    if ($existing -and [string]$existing.path -eq $legacyPath -and [string]$existing.name -eq $legacyName) { $legacySeen = $true }
+  }
+  if (-not $legacySeen) {
+    $legacyExists = $false
+    $legacyValue = $null
+    try {
+      $legacyProperty = Read-DefenderRegistryValue -Path $legacyPath -Name $legacyName -RegistryReader $RegistryReader
+      $legacyExists = $true
+      $legacyValue = $legacyProperty.($legacyName)
+    } catch { }
+    $policies += [pscustomobject]@{ path = $legacyPath; name = $legacyName; exists = $legacyExists; value = $legacyValue }
   }
   $services = @()
   foreach ($name in @($plan.Services)) {
@@ -457,7 +485,7 @@ function Read-DefenderSnapshot([string]$Path) {
 }
 
 function Resolve-DefenderTamper {
-  param($State, [scriptblock]$ReadState, [scriptblock]$TamperPrompt, [string]$LogDirectory, [string]$Action)
+  param($State, [scriptblock]$ReadState, [scriptblock]$RegistryReader, [scriptblock]$TamperPrompt, [string]$LogDirectory, [string]$Action)
   $tamper = [string]$State.tamper
   if ($tamper -ne 'on') {
     return [pscustomobject]@{ proceed = $true; state = $State; tamper = $(if ($tamper) { $tamper } else { 'unknown' }); prompted = $false }
@@ -467,7 +495,7 @@ function Resolve-DefenderTamper {
   if (-not $accepted) {
     return [pscustomobject]@{ proceed = $false; state = $State; tamper = 'on'; prompted = $true; status = 'tamper-blocked' }
   }
-  $again = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState }
+  $again = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState -RegistryReader $RegistryReader }
   $next = [string]$again.tamper
   if ($next -ne 'off') {
     return [pscustomobject]@{ proceed = $false; state = $again; tamper = $(if ($next) { $next } else { 'unknown' }); prompted = $true; status = 'tamper-blocked' }
@@ -481,13 +509,14 @@ function Invoke-DefenderControl {
     [Parameter(Mandatory = $true)][string]$LogDirectory,
     [Parameter(Mandatory = $true)][string]$SnapshotPath,
     [scriptblock]$ReadState,
+    [scriptblock]$RegistryReader,
     [scriptblock]$CommandSink,
     [scriptblock]$TamperPrompt,
     [scriptblock]$TaskHost
   )
-  $read = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState }
+  $read = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState -RegistryReader $RegistryReader }
   Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'defender-pre'; action = $Action; pre = $read })
-  $gate = Resolve-DefenderTamper -State $read -ReadState $ReadState -TamperPrompt $TamperPrompt -LogDirectory $LogDirectory -Action $Action
+  $gate = Resolve-DefenderTamper -State $read -ReadState $ReadState -RegistryReader $RegistryReader -TamperPrompt $TamperPrompt -LogDirectory $LogDirectory -Action $Action
   if (-not $gate.proceed) {
     Add-MasterJournal $LogDirectory ([pscustomobject]@{ step = 'defender-tamper'; action = $Action; status = 'tamper-blocked'; tamper = $gate.tamper; changed = $false })
     return [pscustomobject]@{ status = 'tamper-blocked'; changed = $false; tamper = [string]$gate.tamper; pre = $read; post = $read }
@@ -513,7 +542,7 @@ function Invoke-DefenderControl {
   if (-not $result.ok -and (Test-DefenderTamperError ([string]$result.error)) -and -not $gate.prompted) {
     $accepted = Request-TamperProtectionOff $TamperPrompt
     if ($accepted) {
-      $retryState = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState }
+      $retryState = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState -RegistryReader $RegistryReader }
       if ([string]$retryState.tamper -eq 'off') {
         if ($Action -eq 'enable') {
           $saved = Read-DefenderSnapshot $SnapshotPath
@@ -535,7 +564,7 @@ function Invoke-DefenderControl {
     }
     return [pscustomobject]@{ status = 'failed'; changed = $false; tamper = [string]$state.tamper; pre = $state; post = $state; error = [string]$result.error }
   }
-  $post = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState }
+  $post = if ($ReadState) { & $ReadState } else { Get-DefenderLiveState -RegistryReader $RegistryReader }
   if ($legacyCleanup.Count -gt 0 -and $legacyMarker) {
     Add-MasterJournal $LogDirectory ([pscustomobject]@{
       step = 'defender-legacy-disableantispyware'
