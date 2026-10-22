@@ -358,6 +358,8 @@ try {
   Assert-True (-not ($entry.Contains('dControl.exe'))) 'entry names dControl.exe'
   Assert-True (-not ($entry.Contains('Probe-DefenderControlCli.ps1'))) 'entry calls the Defender probe'
   Assert-True (-not ($blob.Contains('Start-Process'))) 'installer starts an unwaited process'
+  Assert-True ($blob.Contains('update-manifest.json SHA-256 is required')) 'manifest SHA-256 is optional'
+  Assert-True ($blob.Contains('sealed-payload')) 'offline payload is hashed from the caller path'
   Assert-True ($blob.Contains('Register-ScheduledTask')) 'Defender SYSTEM task is not registered'
   Assert-True ($blob.Contains('Unregister-ScheduledTask')) 'Defender SYSTEM task is not deleted'
   Assert-True (-not ($blob.Contains('schtasks'))) 'installer shells out to task scheduler'
@@ -1054,6 +1056,13 @@ try {
     files = @([ordered]@{ path = 'Launcher.ps1'; sha256 = (Get-BytesSha256 $launcher); bytes = $launcher.Length })
   } | ConvertTo-Json -Depth 6) + "`n")
   Assert-Throws {
+    Open-VerifiedBundle -Brand 'mercedes' -Release $evilRelease -ZipPath $evilZip -ManifestPath $evilManifest -Staging (Join-Path $temp 'evil-missing-stage')
+  } 'SHA-256 is required'
+  $evilRelease = [pscustomobject]@{
+    tag = $evilRelease.tag; version = $evilRelease.version; sha256 = $evilRelease.sha256; bytes = $evilRelease.bytes
+    manifestSha256 = (Get-Sha256Hex $evilManifest)
+  }
+  Assert-Throws {
     Open-VerifiedBundle -Brand 'mercedes' -Release $evilRelease -ZipPath $evilZip -ManifestPath $evilManifest -Staging (Join-Path $temp 'evil-stage')
   } 'Unsafe path'
   Assert-True (([System.IO.File]::ReadAllText((Join-Path $badRoot 'Launcher.ps1'))) -match 'untouched') 'failed verify wrote the install root'
@@ -1073,6 +1082,10 @@ try {
       [ordered]@{ path = 'version.json'; sha256 = (Get-BytesSha256 $version); bytes = $version.Length }
     )
   } | ConvertTo-Json -Depth 6) + "`n")
+  $extraRelease = [pscustomobject]@{
+    tag = $extraRelease.tag; version = $extraRelease.version; sha256 = $extraRelease.sha256; bytes = $extraRelease.bytes
+    manifestSha256 = (Get-Sha256Hex $extraManifest)
+  }
   Assert-Throws {
     Open-VerifiedBundle -Brand 'mercedes' -Release $extraRelease -ZipPath $extraZip -ManifestPath $extraManifest -Staging (Join-Path $temp 'extra-stage')
   } 'Unexpected bundle file'
@@ -1093,7 +1106,7 @@ try {
   }
   Write-Utf8NoBom $localManifest (($localObject | ConvertTo-Json -Depth 6) + "`n")
   Assert-Throws {
-    Open-VerifiedBundle -Brand 'mercedes' -Release ([pscustomobject]@{ tag = 'mercedes-v1.2.3-beta.1'; version = '1.2.3-beta.1'; sha256 = $localObject.sha256; bytes = $localObject.bytes }) -ZipPath $localZip -ManifestPath $localManifest -Staging (Join-Path $temp 'local-stage')
+    Open-VerifiedBundle -Brand 'mercedes' -Release ([pscustomobject]@{ tag = 'mercedes-v1.2.3-beta.1'; version = '1.2.3-beta.1'; sha256 = $localObject.sha256; bytes = $localObject.bytes; manifestSha256 = (Get-Sha256Hex $localManifest) }) -ZipPath $localZip -ManifestPath $localManifest -Staging (Join-Path $temp 'local-stage')
   } 'machine-local'
 
   $foreign = Join-Path $temp 'foreign-root'
@@ -1409,6 +1422,10 @@ try {
     )
   }
   Write-Utf8NoBom $profileManifest (($profileObject | ConvertTo-Json -Depth 6) + "`n")
+  $profileRelease = [pscustomobject]@{
+    tag = $profileRelease.tag; version = $profileRelease.version; sha256 = $profileRelease.sha256; bytes = $profileRelease.bytes
+    manifestSha256 = (Get-Sha256Hex $profileManifest)
+  }
   $profileStage = Join-Path $temp 'profile-stage'
   $opened = Open-VerifiedBundle -Brand 'mercedes' -Release $profileRelease -ZipPath $profileZip -ManifestPath $profileManifest -Staging $profileStage
   Assert-True ([string]$opened.brand -eq 'mercedes') 'profile bundle was rejected'

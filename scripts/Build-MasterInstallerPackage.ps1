@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 $script:Ps2ExeVersion = '1.0.18'
 $script:Ps2ExeNupkgSha256 = '692124163d0e71262d76e2f2b2588e1661df28a8f0cf3b1725e47a957afce39f'
 $script:CatalogPin = 'c514717b22c24b68c2a445e08f02131e1f9fd62d600bcf292f88f8a4e1597aba'
+$script:EmbeddedSha256SumsToken = '__EMBEDDED_SHA256SUMS__'
 $script:PackageTimestamp = [datetimeoffset]::new(2026, 1, 1, 0, 0, 0, [timespan]::Zero)
 
 function Import-ZipSupport {
@@ -83,6 +84,21 @@ function Get-MasterPackageLayout {
     [void]$rels.Add(('installer/Master/lib/{0}' -f [System.IO.Path]::GetFileName($file)))
   }
   $tools = [System.IO.Path]::GetFullPath((Join-Path -Path (Join-Path -Path $RepoRoot -ChildPath 'tools') -ChildPath 'security'))
+  $dcontrol = Join-Path -Path $tools -ChildPath 'dcontrol'
+  $dcontrolAllowed = @('ReadMe.txt', 'STATUS.md')
+  if (Test-Path -LiteralPath $dcontrol) {
+    $dcontrolPrefix = $dcontrol.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    foreach ($file in [System.IO.Directory]::EnumerateFiles($dcontrol, '*', [System.IO.SearchOption]::AllDirectories)) {
+      $full = [System.IO.Path]::GetFullPath($file)
+      if (-not $full.StartsWith($dcontrolPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+      $name = $full.Substring($dcontrolPrefix.Length).Replace('\', '/')
+      $allowed = $false
+      foreach ($entry in $dcontrolAllowed) {
+        if ($name -ceq $entry) { $allowed = $true }
+      }
+      if (-not $allowed) { throw "tools/security/dcontrol/$name is not on the allow-list (ReadMe.txt, STATUS.md)" }
+    }
+  }
   $prefix = $tools.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
   foreach ($file in [System.IO.Directory]::EnumerateFiles($tools, '*', [System.IO.SearchOption]::AllDirectories)) {
     $full = [System.IO.Path]::GetFullPath($file)
@@ -99,7 +115,8 @@ function Get-MasterPackageLayout {
 
 function Write-PackageChecksums {
   param([Parameter(Mandatory = $true)][string]$StageRoot)
-  $names = @(Get-PackageRelativeFiles $StageRoot | Where-Object { $_ -ne 'SHA256SUMS.txt' })
+  # Setup.exe embeds the SHA-256 of this file, so the file cannot list Setup.exe.
+  $names = @(Get-PackageRelativeFiles $StageRoot | Where-Object { $_ -ne 'SHA256SUMS.txt' -and $_ -ne 'Setup.exe' })
   $builder = New-Object System.Text.StringBuilder
   foreach ($rel in $names) {
     $full = Join-PackageRelative $StageRoot $rel
@@ -135,9 +152,12 @@ function Assert-PackageChecksums {
     $listed[$Matches[2]] = $Matches[1]
   }
   if ($listed.ContainsKey('SHA256SUMS.txt')) { throw 'SHA256SUMS.txt lists itself' }
+  if ($listed.ContainsKey('Setup.exe')) { throw 'SHA256SUMS.txt lists Setup.exe' }
+  $exePath = Join-Path -Path $Root -ChildPath 'Setup.exe'
+  if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { throw 'Setup.exe is missing' }
   $actual = @(Get-PackageRelativeFiles $Root)
   foreach ($rel in $actual) {
-    if ($rel -eq 'SHA256SUMS.txt') { continue }
+    if ($rel -eq 'SHA256SUMS.txt' -or $rel -eq 'Setup.exe') { continue }
     if (-not $listed.ContainsKey($rel)) { throw "SHA256SUMS.txt is missing $rel" }
     $full = Join-PackageRelative $Root $rel
     $hash = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -240,14 +260,27 @@ function Save-PinnedPs2ExeNupkg {
 }
 
 function Invoke-PinnedPs2Exe {
-  param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][string]$Nupkg, [Parameter(Mandatory = $true)][string]$OutputExe)
+  param(
+    [Parameter(Mandatory = $true)][string]$RepoRoot,
+    [Parameter(Mandatory = $true)][string]$Nupkg,
+    [Parameter(Mandatory = $true)][string]$OutputExe,
+    [Parameter(Mandatory = $true)][string]$SumsSha256
+  )
+  if ($SumsSha256 -notmatch '^[0-9a-f]{64}$') { throw "embedded SHA256SUMS hash is not 64 lowercase hex" }
   Import-ZipSupport
   $toolDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('ps2exe-' + [guid]::NewGuid().ToString('n'))
   New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
   try {
     [System.IO.Compression.ZipFile]::ExtractToDirectory($Nupkg, $toolDir)
     Import-Module -Name (Join-Path -Path $toolDir -ChildPath 'ps2exe.psd1') -Force -ErrorAction Stop
-    $inputFile = Join-Path -Path (Join-Path -Path (Join-Path -Path $RepoRoot -ChildPath 'installer') -ChildPath 'Master') -ChildPath 'Setup.ps1'
+    $sourceFile = Join-Path -Path (Join-Path -Path (Join-Path -Path $RepoRoot -ChildPath 'installer') -ChildPath 'Master') -ChildPath 'Setup.ps1'
+    $sourceText = [System.IO.File]::ReadAllText($sourceFile)
+    $token = $script:EmbeddedSha256SumsToken
+    if (-not $sourceText.Contains($token)) { throw 'Setup.ps1 is missing the SHA256SUMS embed token' }
+    $generatedText = $sourceText.Replace($token, $SumsSha256)
+    if ($generatedText.Contains($token)) { throw 'Setup.ps1 embed token was not replaced' }
+    $inputFile = Join-Path -Path $toolDir -ChildPath 'Setup.generated.ps1'
+    Write-Utf8NoBomText $inputFile $generatedText
     if (Test-Path -LiteralPath $OutputExe) { Remove-Item -LiteralPath $OutputExe -Force }
     $arguments = @{
       inputFile = $inputFile
@@ -289,6 +322,10 @@ function Invoke-MasterPackageBuild {
     $readme = Join-Path -Path (Join-Path -Path $repo -ChildPath 'packaging') -ChildPath 'README-INSTALL.txt'
     Copy-BinaryToPackage $readme (Join-Path -Path $stage -ChildPath 'README-INSTALL.txt')
     $exe = Join-Path -Path $stage -ChildPath 'Setup.exe'
+    if (Test-Path -LiteralPath $exe) { Remove-Item -LiteralPath $exe -Force }
+    Write-PackageChecksums $stage
+    $sumsPath = Join-Path -Path $stage -ChildPath 'SHA256SUMS.txt'
+    $embedded = (Get-FileHash -LiteralPath $sumsPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($SkipExeCompile) {
       $note = [System.Text.Encoding]::ASCII.GetBytes("diagnostic-workstation-setup-stand-in`n")
       [System.IO.File]::WriteAllBytes($exe, $note)
@@ -303,11 +340,10 @@ function Invoke-MasterPackageBuild {
         if ($actual -ne $script:Ps2ExeNupkgSha256) { throw "nupkg SHA-256 $actual does not match the pin" }
         Write-Host "Verified ps2exe $($script:Ps2ExeVersion) nupkg SHA-256 $actual"
       }
-      Invoke-PinnedPs2Exe -RepoRoot $repo -Nupkg $nupkg -OutputExe $exe
+      Invoke-PinnedPs2Exe -RepoRoot $repo -Nupkg $nupkg -OutputExe $exe -SumsSha256 $embedded
       $head = [System.IO.File]::ReadAllBytes($exe)
       if ($head.Length -lt 2 -or $head[0] -ne 77 -or $head[1] -ne 90) { throw 'Setup.exe is not a Windows executable' }
     }
-    Write-PackageChecksums $stage
     Assert-PackageChecksums $stage
     $zipPath = Join-Path -Path $OutputDirectory -ChildPath 'DiagnosticWorkstation-Setup.zip'
     $side = $zipPath + '.sha256'
@@ -319,6 +355,7 @@ function Invoke-MasterPackageBuild {
     if ($zipCatalog -ne $script:CatalogPin) { throw "zip catalog.json SHA-256 $zipCatalog does not match $($script:CatalogPin)" }
     $zipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-Utf8NoBomText $side (($zipHash + '  DiagnosticWorkstation-Setup.zip') + "`n")
+    Write-Host 'PS2EXE output is not byte-reproducible. The CI artifact hash is the attested value.'
     Write-Host "PS2EXE version $($script:Ps2ExeVersion)"
     Write-Host "PS2EXE nupkg SHA-256 $($script:Ps2ExeNupkgSha256)"
     Write-Host "DiagnosticWorkstation-Setup.zip SHA-256 $zipHash"
@@ -330,6 +367,25 @@ function Invoke-MasterPackageBuild {
     if ($downloaded -and (Test-Path -LiteralPath $downloaded)) { Remove-Item -LiteralPath $downloaded -Force }
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
   }
+}
+
+function Update-StagedSetupExe {
+  param(
+    [Parameter(Mandatory = $true)][string]$StageRoot,
+    [Parameter(Mandatory = $true)][string]$Nupkg
+  )
+  $repoRoot = Split-Path -Parent $PSScriptRoot
+  $exe = Join-Path -Path $StageRoot -ChildPath 'Setup.exe'
+  if (Test-Path -LiteralPath $exe) { Remove-Item -LiteralPath $exe -Force }
+  Write-PackageChecksums $StageRoot
+  $sumsPath = Join-Path -Path $StageRoot -ChildPath 'SHA256SUMS.txt'
+  $embedded = (Get-FileHash -LiteralPath $sumsPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $actual = (Get-FileHash -LiteralPath $Nupkg -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actual -ne $script:Ps2ExeNupkgSha256) { throw "nupkg SHA-256 $actual does not match the pin" }
+  Invoke-PinnedPs2Exe -RepoRoot $repoRoot -Nupkg $Nupkg -OutputExe $exe -SumsSha256 $embedded
+  $head = [System.IO.File]::ReadAllBytes($exe)
+  if ($head.Length -lt 2 -or $head[0] -ne 77 -or $head[1] -ne 90) { throw 'Setup.exe is not a Windows executable' }
+  Assert-PackageChecksums $StageRoot
 }
 
 if ($env:MASTER_PACKAGE_LIBRARY -eq '1') { return }

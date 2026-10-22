@@ -1,6 +1,7 @@
 name: Package master installer
 
 # Builds DiagnosticWorkstation-Setup.zip. Does not create a release, push a tag, or publish assets.
+# PS2EXE output is not byte-reproducible. The CI artifact hash is the attested value.
 on:
   workflow_dispatch:
   pull_request:
@@ -8,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   package:
@@ -30,6 +30,14 @@ jobs:
           $side = $zip + '.sha256'
           if (-not (Test-Path -LiteralPath $zip)) { throw 'DiagnosticWorkstation-Setup.zip was not written' }
           if (-not (Test-Path -LiteralPath $side)) { throw 'DiagnosticWorkstation-Setup.zip.sha256 was not written' }
+          $note = 'PS2EXE output is not byte-reproducible. The CI artifact hash is the attested value.'
+          Write-Output $note
+          $sideText = [System.IO.File]::ReadAllText($side).Trim()
+          Write-Output $sideText
+          if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_STEP_SUMMARY)) {
+            $utf8 = New-Object System.Text.UTF8Encoding $false
+            [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, ($note + "`n" + $sideText + "`n"), $utf8)
+          }
           Write-Output 'Package build finished'
       - name: Verify the package and run Setup.exe in report mode
         shell: powershell

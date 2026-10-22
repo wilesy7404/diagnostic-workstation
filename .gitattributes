@@ -13,3 +13,6 @@ releases/versions.lock.json -text
 tools/security/wub/tool-manifest.json -text
 # Offline payload bytes are staged as downloaded. core.autocrlf must not rewrite them.
 offline/** -text
+# keys and brand release records are hashed from the git blob. Do not rewrite line endings.
+keys/** -text
+brands/*/release.json -text

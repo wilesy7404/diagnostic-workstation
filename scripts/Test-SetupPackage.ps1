@@ -14,6 +14,28 @@ Remove-Item Env:MASTER_PACKAGE_LIBRARY
 . (Join-Path -Path (Join-Path -Path (Join-Path -Path $repo -ChildPath 'installer') -ChildPath 'Master') -ChildPath 'lib/Catalog.ps1')
 . (Join-Path -Path (Join-Path -Path (Join-Path -Path $repo -ChildPath 'installer') -ChildPath 'Master') -ChildPath 'lib/SetupPlan.ps1')
 
+function Export-GitHeadBlob {
+  param([Parameter(Mandatory = $true)][string]$Relative, [Parameter(Mandatory = $true)][string]$Destination)
+  $info = New-Object System.Diagnostics.ProcessStartInfo
+  $info.FileName = 'git'
+  $info.Arguments = '-c core.autocrlf=false cat-file -p HEAD:' + $Relative
+  $info.WorkingDirectory = $repo
+  $info.UseShellExecute = $false
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $info.CreateNoWindow = $true
+  $proc = New-Object System.Diagnostics.Process
+  $proc.StartInfo = $info
+  [void]$proc.Start()
+  $parent = Split-Path -Parent $Destination
+  if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+  $stream = [System.IO.File]::Create($Destination)
+  try { $proc.StandardOutput.BaseStream.CopyTo($stream) } finally { $stream.Dispose() }
+  $errorText = $proc.StandardError.ReadToEnd()
+  $proc.WaitForExit()
+  if ($proc.ExitCode -ne 0) { throw "git cat-file HEAD:$Relative failed: $errorText" }
+}
+
 $temp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('setup-package-' + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 try {
@@ -45,7 +67,23 @@ try {
   )) {
     Assert-SameFileBytes (Join-PackageRelative $repo $rel) (Join-PackageRelative $extracted $rel)
   }
+  foreach ($rel in @(
+    'keys/qa.pub',
+    'keys/release.pub',
+    'keys/README.md',
+    'brands/bmw/release.json',
+    'brands/mercedes/release.json'
+  )) {
+    $blob = Join-Path -Path $temp -ChildPath ('blob-' + ($rel.Replace('/', '-')))
+    Export-GitHeadBlob $rel $blob
+    Assert-SameFileBytes $blob (Join-PackageRelative $extracted $rel)
+  }
+  $sumsText = [System.IO.File]::ReadAllText((Join-Path -Path $extracted -ChildPath 'SHA256SUMS.txt'))
+  Assert-True (-not $sumsText.Contains('Setup.exe')) 'SHA256SUMS.txt lists Setup.exe'
   $files = @(Get-PackageRelativeFiles $extracted)
+  $dcontrol = @($files | Where-Object { $_.StartsWith('tools/security/dcontrol/') })
+  Assert-True ($dcontrol.Count -eq 2) 'dcontrol package is not the two-file allow-list'
+  Assert-True (($dcontrol -contains 'tools/security/dcontrol/ReadMe.txt') -and ($dcontrol -contains 'tools/security/dcontrol/STATUS.md')) 'dcontrol allow-list files were not packaged'
   foreach ($required in @(
     'Setup.exe',
     'README-INSTALL.txt',
@@ -121,12 +159,24 @@ try {
   Assert-True ($readme.Contains('SHA256SUMS.txt')) 'README does not mention SHA256SUMS.txt'
   Assert-True ($readme.Contains('-WhatIf')) 'README does not document report mode'
   Assert-True ($readme.Contains('does not stop the WinDefend or MDCoreSvc')) 'README does not say those services stay running'
+  Assert-True ($readme.Contains('not byte-reproducible')) 'README does not say PS2EXE output is not byte-reproducible'
+  Assert-True ($readme.Contains('attested value')) 'README does not say the CI artifact hash is the attested value'
+  Assert-True ($readme.Contains('SmartScreen')) 'README does not mention SmartScreen'
+  Assert-True ($readme.Contains('More info')) 'README does not give the SmartScreen workaround'
+  Assert-True ($readme.Contains('Run anyway')) 'README does not give the SmartScreen workaround'
 
   $setupText = [System.IO.File]::ReadAllText((Join-Path -Path (Join-Path -Path (Join-Path -Path $repo -ChildPath 'installer') -ChildPath 'Master') -ChildPath 'Setup.ps1'))
   $planText = [System.IO.File]::ReadAllText((Join-Path -Path (Join-Path -Path (Join-Path -Path (Join-Path -Path $repo -ChildPath 'installer') -ChildPath 'Master') -ChildPath 'lib') -ChildPath 'SetupPlan.ps1'))
   Assert-True ($setupText.Contains('Install-Master.ps1')) 'Setup.ps1 does not run Install-Master.ps1'
-  Assert-True ($setupText.Contains('exit')) 'Setup.ps1 does not pass an exit code'
-  Assert-True (-not $setupText.Contains('Start-Process')) 'Setup.ps1 starts a separate process'
+  Assert-True ($setupText.Contains('exit $code')) 'Setup.ps1 does not return the installer exit code'
+  Assert-True (-not $setupText.Contains('exit 0')) 'Setup.ps1 forces exit 0'
+  Assert-True ($setupText.Contains('Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force')) 'Setup.ps1 does not set the process execution policy'
+  Assert-True ($setupText.Contains('System.Diagnostics.Process')) 'Setup.ps1 does not run the installer in a child process'
+  Assert-True ($setupText.Contains('-ExecutionPolicy')) 'Setup.ps1 does not pass ExecutionPolicy Bypass to the child'
+  Assert-True ($setupText.Contains('__EMBEDDED_SHA256SUMS__')) 'Setup.ps1 has no SHA256SUMS embed token'
+  Assert-True ($setupText.Contains('SHA-256 mismatch for')) 'Setup.ps1 does not refuse a checksum mismatch'
+  Assert-True ($setupText.Contains('Unlisted extra file')) 'Setup.ps1 does not refuse an unlisted file'
+  Assert-True (-not $setupText.Contains('Start-Process')) 'Setup.ps1 uses the Start-Process cmdlet'
   Assert-True (-not $setupText.Contains('Out-File')) 'Setup.ps1 uses Out-File'
   Assert-True (-not $planText.Contains('Start-Process')) 'SetupPlan.ps1 starts a separate process'
   Assert-True (-not $planText.Contains('Out-File')) 'SetupPlan.ps1 uses Out-File'
@@ -153,6 +203,14 @@ try {
   Assert-True ($workflow.Contains('692124163d0e71262d76e2f2b2588e1661df28a8f0cf3b1725e47a957afce39f')) 'workflow does not pin the nupkg SHA-256'
   Assert-True ($workflow.Contains('1.0.18')) 'workflow does not pin the PS2EXE version'
   Assert-True ($workflow.Contains('DiagnosticWorkstation-Setup.zip')) 'workflow does not upload the zip'
+  Assert-True (-not $workflow.Contains('actions: write')) 'workflow keeps actions: write'
+  Assert-True ($workflow.Contains('not byte-reproducible')) 'workflow does not say PS2EXE output is not byte-reproducible'
+  Assert-True ($workflow.Contains('attested value')) 'workflow does not say the CI artifact hash is the attested value'
+  $attributes = [System.IO.File]::ReadAllText((Join-Path -Path $repo -ChildPath '.gitattributes'))
+  Assert-True ($attributes.Contains('keys/** -text')) 'gitattributes does not pin keys as text'
+  Assert-True ($attributes.Contains('brands/*/release.json -text')) 'gitattributes does not pin brand release.json as text'
+  Assert-True ($buildText.Contains('ReadMe.txt') -and $buildText.Contains('STATUS.md') -and $buildText.Contains('allow-list')) 'dcontrol allow-list is missing'
+  Assert-True ($buildText.Contains('__EMBEDDED_SHA256SUMS__')) 'build does not embed the SHA256SUMS hash'
 } finally {
   if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }
