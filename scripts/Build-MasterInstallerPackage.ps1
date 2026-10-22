@@ -243,7 +243,11 @@ function Save-PinnedPs2ExeNupkg {
     }
   }
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-  $url = 'https://www.powershellgallery.com/api/v2/package/ps2exe/' + $script:Ps2ExeVersion
+  # The gallery package API often answers 404. The CDN blob is the same nupkg; the hash pin below rejects a different file.
+  $urls = @(
+    ('https://cdn.powershellgallery.com/packages/ps2exe.' + $script:Ps2ExeVersion + '.nupkg'),
+    ('https://www.powershellgallery.com/api/v2/package/ps2exe/' + $script:Ps2ExeVersion)
+  )
   $parent = Split-Path -Parent $Destination
   if ($parent -and -not (Test-Path -LiteralPath $parent)) {
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
@@ -253,14 +257,17 @@ function Save-PinnedPs2ExeNupkg {
   $downloadError = $null
   for ($attempt = 1; $attempt -le 4; $attempt++) {
     if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
-    try {
-      Invoke-WebRequest -Uri $url -OutFile $Destination -UseBasicParsing -Headers @{ 'User-Agent' = 'diagnostic-workstation' }
-      $downloaded = $true
-      break
-    } catch {
-      $downloadError = $_
-      if ($attempt -lt 4) { Start-Sleep -Seconds (2 * $attempt) }
+    foreach ($url in $urls) {
+      try {
+        Invoke-WebRequest -Uri $url -OutFile $Destination -UseBasicParsing -Headers @{ 'User-Agent' = 'diagnostic-workstation' }
+        $downloaded = $true
+        break
+      } catch {
+        $downloadError = $_
+      }
     }
+    if ($downloaded) { break }
+    if ($attempt -lt 4) { Start-Sleep -Seconds (2 * $attempt) }
   }
   if (-not $downloaded) { throw $downloadError }
   $actual = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
