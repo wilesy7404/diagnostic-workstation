@@ -14,6 +14,8 @@ Approved tags are `mercedes-v*` and `bmw-v*`. `universal-v*` and bare `v*` tags 
 
 The same rule is used for `update-manifest.json`. The ZIP is checked for size and SHA-256, then every file path, size, and SHA-256 is checked before the brand folder is replaced. A bad hash, extra file, or `..` path stops the install. The live folder is not changed.
 
+`DiagnosticWorkstation-Setup.zip` is that installer as one download. `.github/workflows/master-installer-package.yml` builds it and does not publish a release. `Setup.exe` asks for administrator approval once, then runs `Install-Master.ps1` and passes `-Brand`, `-Channel`, `-Tag`, `-Source`, `-OfflineOnly`, `-VerifyOnly`, and `-AllowDowngrade` through. `-WhatIf` or `/report` prints the resolved brand and the package file list and does not install. Offline payloads are not in the zip. Put them next to `Setup.exe` in `offline\<tag>\`. The package is unsigned. ECDSA P-256 signing comes later. `packaging/README-INSTALL.txt` is the operator note.
+
 If the download fails, the installer looks in `-Source <folder>` and in `offline/<tag>/` for the same two files and checks the same pins. `-OfflineOnly` skips the network. An expired catalog still installs and records `Catalog dated ...; newer versions may exist`.
 
 `catalog/catalog.json` pins `bmw-v1.0.2-beta.1` and `mercedes-v0.1.3-beta.4` (channel beta). Neither build is published: no tag and no GitHub release yet, and the repository has no `offline/<tag>/` copy. An install of either pin therefore stops with `No offline payload was found` until the release assets exist, and it does not create the brand folder. `mercedes-v0.1.3-beta.3` was voided and is not pinned. `mercedes-v0.1.3-beta.1` and `mercedes-v0.1.3-beta.2` stay unpinned. A brand with an empty release list stops with `No approved <brand> release is pinned`.
@@ -33,7 +35,7 @@ Other brand ids are refused. The installer copies `apps.json`, `controls-pin.jso
 
 The install marker `.installed-bundle.json` records Mercedes supervisor `WorkstationManager.exe` and BMW supervisor `Watchdog.ps1`. WorkstationManager migration for BMW is later. This installer does not start either program and does not write Winlogon, shell, or Run values.
 
-The Mercedes `WorkstationManager.exe` in the pinned `0.1.3-beta.4` bundle uses `godebug default=go1.20`. With that setting, `netedns0` is omitted. `godebug default=go1.16` would include it. The build stays on `go1.20` because the program does not use DNS. When `brands.json` does not contain the embedded brand, the install prompt title is `Install ` with a blank name. That is a known cosmetic issue for the next exe rebuild. `manager/` and the current exe are unchanged.
+The Mercedes `WorkstationManager.exe` in the pinned `0.1.3-beta.4` bundle uses `godebug default=go1.20`. With that setting, `netedns0` is omitted. `godebug default=go1.16` would include it. The build stays on `go1.20` because the program does not use DNS. When `brands.json` does not contain the embedded brand, the pinned `WorkstationManager.exe` still shows the install prompt title `Install ` with a blank name. `manager/` now shows a Brand not resolved error and does not continue. That exe is not rebuilt here.
 
 `releases/versions.lock.json` is append-only. `sourceCommit` is the commit the tag points to, not build provenance. BMW `v1.0.1-beta.1`, `v1.0.1-beta.2`, and `v1.0.1-beta.3` all point at `186efe7531a6019dff2ebec56823de367d780a52` and have different zip bytes.
 
