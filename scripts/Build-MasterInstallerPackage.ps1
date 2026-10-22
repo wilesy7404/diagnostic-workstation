@@ -248,9 +248,21 @@ function Save-PinnedPs2ExeNupkg {
   if ($parent -and -not (Test-Path -LiteralPath $parent)) {
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
   }
-  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
   $ProgressPreference = 'SilentlyContinue'
-  Invoke-WebRequest -Uri $url -OutFile $Destination -UseBasicParsing -Headers @{ 'User-Agent' = 'diagnostic-workstation' }
+  $downloaded = $false
+  $downloadError = $null
+  for ($attempt = 1; $attempt -le 4; $attempt++) {
+    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
+    try {
+      Invoke-WebRequest -Uri $url -OutFile $Destination -UseBasicParsing -Headers @{ 'User-Agent' = 'diagnostic-workstation' }
+      $downloaded = $true
+      break
+    } catch {
+      $downloadError = $_
+      if ($attempt -lt 4) { Start-Sleep -Seconds (2 * $attempt) }
+    }
+  }
+  if (-not $downloaded) { throw $downloadError }
   $actual = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($actual -ne $script:Ps2ExeNupkgSha256) {
     Remove-Item -LiteralPath $Destination -Force
