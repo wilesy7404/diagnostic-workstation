@@ -167,8 +167,14 @@ try {
     if ($tamperText -notmatch 'Nothing was installed') { throw 'tampered package did not say nothing was installed' }
   } finally {
     if ($policySet) {
-      Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy $savedMachine -Force
-      Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy $savedUser -Force
+      foreach ($pair in @(
+        @{ Scope = 'CurrentUser'; Value = $savedUser },
+        @{ Scope = 'LocalMachine'; Value = $savedMachine }
+      )) {
+        try {
+          Set-ExecutionPolicy -Scope $pair.Scope -ExecutionPolicy $pair.Value -Force -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+        } catch { }
+      }
     }
     if (Test-Path -LiteralPath $caseRoot) { Remove-Item -LiteralPath $caseRoot -Recurse -Force }
   }
