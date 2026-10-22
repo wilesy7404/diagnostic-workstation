@@ -84,7 +84,6 @@ function Receive-ApprovedPayload {
     [string]$Source,
     [string]$RepoRoot,
     [switch]$OfflineOnly,
-    [string]$WorkDirectory,
     [scriptblock]$Downloader
   )
   $tag = [string]$Release.tag
@@ -100,7 +99,8 @@ function Receive-ApprovedPayload {
   if (-not $OfflineOnly -and -not $Source) {
     $zipUrl = Get-ApprovedAssetUrl $Brand $tag $asset
     $manifestUrl = Get-ApprovedAssetUrl $Brand $tag $manifestName
-    $temp = Join-Path -Path $WorkDirectory -ChildPath 'download'
+    $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('dw-download-' + [guid]::NewGuid().ToString('n'))
+    $temp = Join-Path -Path $tempRoot -ChildPath 'download'
     try {
       Save-ApprovedDownload $zipUrl (Join-Path $temp $asset) $Downloader
       Save-ApprovedDownload $manifestUrl (Join-Path $temp $manifestName) $Downloader
@@ -110,10 +110,11 @@ function Receive-ApprovedPayload {
         Manifest = (Join-Path $temp $manifestName)
         ZipUrl = $zipUrl
         ManifestUrl = $manifestUrl
+        DownloadRoot = $tempRoot
       }
     } catch {
       $onlineError = $_.Exception.Message
-      if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+      if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
   }
   if (-not $offline) { $offline = Find-OfflinePayload $tag $Source $RepoRoot $asset $manifestName }

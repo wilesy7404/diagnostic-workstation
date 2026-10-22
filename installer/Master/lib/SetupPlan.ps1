@@ -70,7 +70,10 @@ function Get-SetupForwardParameters {
   if ([string]::IsNullOrWhiteSpace($Channel)) { $Channel = 'beta' }
   $splat = @{ Brand = $Brand; Channel = $Channel }
   if (-not [string]::IsNullOrWhiteSpace($Tag)) { $splat['Tag'] = $Tag }
-  if (-not [string]::IsNullOrWhiteSpace($Source)) { $splat['Source'] = $Source }
+  if (-not [string]::IsNullOrWhiteSpace($Source)) {
+    try { $splat['Source'] = [System.IO.Path]::GetFullPath($Source) }
+    catch { throw 'The -Source path is not valid. Nothing was installed.' }
+  }
   if ($OfflineOnly) { $splat['OfflineOnly'] = $true }
   if ($VerifyOnly) { $splat['VerifyOnly'] = $true }
   if ($AllowDowngrade) { $splat['AllowDowngrade'] = $true }

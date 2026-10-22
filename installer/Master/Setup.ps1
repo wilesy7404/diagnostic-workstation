@@ -89,15 +89,43 @@ function Resolve-SetupExeDirectory {
   return $null
 }
 
+function Assert-SetupNotReparsePoint {
+  param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Label)
+  $attrs = [System.IO.File]::GetAttributes($Path)
+  if (($attrs -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    Write-Output "Reparse point ${Label}. Nothing was installed."
+    exit 1
+  }
+}
+
+function Get-SetupBytesSha256 {
+  param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { return (([System.BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()) }
+  finally { $sha.Dispose() }
+}
+
 function Get-SetupRelativeFiles {
   param([Parameter(Mandatory = $true)][string]$Root)
   $fullRoot = [System.IO.Path]::GetFullPath($Root)
+  Assert-SetupNotReparsePoint $fullRoot $fullRoot
   $prefix = $fullRoot.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
   $list = New-Object System.Collections.Generic.List[string]
-  foreach ($file in [System.IO.Directory]::EnumerateFiles($fullRoot, '*', [System.IO.SearchOption]::AllDirectories)) {
-    $full = [System.IO.Path]::GetFullPath($file)
-    if (-not $full.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
-    [void]$list.Add($full.Substring($prefix.Length).Replace('\', '/'))
+  $pending = New-Object 'System.Collections.Generic.Stack[string]'
+  $pending.Push($fullRoot)
+  while ($pending.Count -gt 0) {
+    $dir = $pending.Pop()
+    Assert-SetupNotReparsePoint $dir $dir
+    foreach ($file in [System.IO.Directory]::EnumerateFiles($dir)) {
+      Assert-SetupNotReparsePoint $file $file
+      $full = [System.IO.Path]::GetFullPath($file)
+      if (-not $full.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+      [void]$list.Add($full.Substring($prefix.Length).Replace('\', '/'))
+    }
+    foreach ($child in [System.IO.Directory]::EnumerateDirectories($dir)) {
+      Assert-SetupNotReparsePoint $child $child
+      $pending.Push($child)
+    }
   }
   return @($list.ToArray())
 }
@@ -123,26 +151,8 @@ function Get-SetupLeafName {
 }
 
 function Get-SetupApprovedTags {
-  param([Parameter(Mandatory = $true)][string]$PackageRoot, [Parameter(Mandatory = $true)]$Listed)
-  $rel = 'catalog/catalog.json'
-  if (-not $Listed.ContainsKey($rel)) {
-    Write-Output 'catalog/catalog.json is not in SHA256SUMS.txt. Nothing was installed.'
-    exit 1
-  }
-  $full = Resolve-SetupListedPath $PackageRoot $rel
-  if ([string]::IsNullOrWhiteSpace($full)) {
-    Write-Output 'catalog/catalog.json is not in SHA256SUMS.txt. Nothing was installed.'
-    exit 1
-  }
-  $bytes = [System.IO.File]::ReadAllBytes($full)
-  $sha = [System.Security.Cryptography.SHA256]::Create()
-  try {
-    $hash = ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
-  } finally { $sha.Dispose() }
-  if ($hash -ne [string]$Listed[$rel]) {
-    Write-Output 'SHA-256 mismatch for catalog/catalog.json. Nothing was installed.'
-    exit 1
-  }
+  param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+  $bytes = $Bytes
   $text = ''
   if ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) {
     $text = [System.Text.Encoding]::UTF8.GetString($bytes, 3, ($bytes.Length - 3))
@@ -166,7 +176,7 @@ function Get-SetupPathKind {
   $rel = $Relative.Replace('\', '/')
   $leaf = Get-SetupLeafName $rel
   if ($leaf -ieq 'desktop.ini' -or $leaf -ieq 'Thumbs.db') { return 'ignore' }
-  if ($rel -eq 'SHA256SUMS.txt' -or $rel -eq 'Setup.exe') { return 'package' }
+  if ($rel.Equals('SHA256SUMS.txt') -or $rel.Equals('Setup.exe')) { return 'package' }
   if ($Listed.ContainsKey($rel)) { return 'listed' }
   if ($rel -match '^(?i)offline/([^/]+)/(workstation\.zip|update-manifest\.json)$') {
     if ($Tags.ContainsKey($Matches[1])) { return 'offline' }
@@ -181,22 +191,30 @@ function Assert-SetupPackageHashes {
     Write-Output 'Setup.exe has no embedded SHA256SUMS hash. Nothing was installed.'
     exit 1
   }
+  Assert-SetupNotReparsePoint $PackageRoot $PackageRoot
   $sumsPath = Join-Path -Path $PackageRoot -ChildPath 'SHA256SUMS.txt'
   if (-not (Test-Path -LiteralPath $sumsPath -PathType Leaf)) {
     Write-Output 'SHA256SUMS.txt is missing. Nothing was installed.'
     exit 1
   }
-  $actualSums = (Get-FileHash -LiteralPath $sumsPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  Assert-SetupNotReparsePoint $sumsPath 'SHA256SUMS.txt'
+  $sumsBytes = [System.IO.File]::ReadAllBytes($sumsPath)
+  $actualSums = Get-SetupBytesSha256 $sumsBytes
   if ($actualSums -ne $expected) {
     Write-Output 'SHA256SUMS.txt does not match the hash embedded in Setup.exe. Nothing was installed.'
     exit 1
   }
-  $text = [System.IO.File]::ReadAllText($sumsPath)
+  $text = ''
+  if ($sumsBytes.Length -ge 3 -and $sumsBytes[0] -eq 239 -and $sumsBytes[1] -eq 187 -and $sumsBytes[2] -eq 191) {
+    $text = [System.Text.Encoding]::UTF8.GetString($sumsBytes, 3, ($sumsBytes.Length - 3))
+  } else {
+    $text = [System.Text.Encoding]::UTF8.GetString($sumsBytes)
+  }
   if ($text.Contains("`r")) {
     Write-Output 'SHA256SUMS.txt contains CR. Nothing was installed.'
     exit 1
   }
-  $listed = @{}
+  $listed = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::Ordinal)
   foreach ($line in @($text -split "`n")) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     if ($line -notmatch '^([0-9a-f]{64})  (.+)$') {
@@ -204,7 +222,7 @@ function Assert-SetupPackageHashes {
       exit 1
     }
     $rel = $Matches[2]
-    if ($listed.ContainsKey($rel) -or $rel -eq 'SHA256SUMS.txt' -or $rel -eq 'Setup.exe') {
+    if ($listed.ContainsKey($rel) -or $rel.Equals('SHA256SUMS.txt') -or $rel.Equals('Setup.exe')) {
       Write-Output "SHA256SUMS.txt lists $rel. Nothing was installed."
       exit 1
     }
@@ -218,6 +236,14 @@ function Assert-SetupPackageHashes {
     Write-Output 'SHA256SUMS.txt lists no files. Nothing was installed.'
     exit 1
   }
+  $catalogRel = 'catalog/catalog.json'
+  if (-not $listed.ContainsKey($catalogRel)) {
+    Write-Output 'catalog/catalog.json is not in SHA256SUMS.txt. Nothing was installed.'
+    exit 1
+  }
+  $pinned = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+  $pinned['SHA256SUMS.txt'] = $sumsBytes
+  $catalogBytes = $null
   $actual = @(Get-SetupRelativeFiles $PackageRoot)
   foreach ($rel in @($listed.Keys)) {
     $full = Resolve-SetupListedPath $PackageRoot $rel
@@ -225,13 +251,21 @@ function Assert-SetupPackageHashes {
       Write-Output "SHA256SUMS.txt lists a missing file ${rel}. Nothing was installed."
       exit 1
     }
-    $hash = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-SetupNotReparsePoint $full $rel
+    $fileBytes = [System.IO.File]::ReadAllBytes($full)
+    $hash = Get-SetupBytesSha256 $fileBytes
     if ($hash -ne $listed[$rel]) {
       Write-Output "SHA-256 mismatch for ${rel}. Nothing was installed."
       exit 1
     }
+    if ($rel.Equals($catalogRel)) { $catalogBytes = $fileBytes }
   }
-  $tags = Get-SetupApprovedTags $PackageRoot $listed
+  if ($null -eq $catalogBytes) {
+    Write-Output 'catalog/catalog.json is not in SHA256SUMS.txt. Nothing was installed.'
+    exit 1
+  }
+  $pinned[$catalogRel] = $catalogBytes
+  $tags = Get-SetupApprovedTags $catalogBytes
   foreach ($rel in $actual) {
     $kind = Get-SetupPathKind $rel $listed $tags
     if ($kind -eq 'ignore' -or $kind -eq 'package' -or $kind -eq 'listed' -or $kind -eq 'offline') { continue }
@@ -243,6 +277,8 @@ function Assert-SetupPackageHashes {
     Write-Output 'Setup.exe is missing from this package. Nothing was installed.'
     exit 1
   }
+  Assert-SetupNotReparsePoint $exe 'Setup.exe'
+  $script:SetupVerified = [pscustomobject]@{ Listed = $listed; Tags = $tags; Pinned = $pinned }
 }
 
 function Find-SetupPlanPath {
@@ -312,20 +348,37 @@ function New-SetupAdminWorkRoot {
     exit 1
   }
   $root = Join-Path -Path $base -ChildPath ('DiagnosticWorkstation-Setup-' + [guid]::NewGuid().ToString('n'))
+  if ([System.IO.Directory]::Exists($root) -or [System.IO.File]::Exists($root)) {
+    Write-Output 'Setup work directory already exists. Nothing was installed.'
+    exit 1
+  }
   $acl = New-Object System.Security.AccessControl.DirectorySecurity
   $acl.SetAccessRuleProtection($true, $false)
   $rights = [System.Security.AccessControl.FileSystemRights]::FullControl
   $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
   $prop = [System.Security.AccessControl.PropagationFlags]::None
   $allow = [System.Security.AccessControl.AccessControlType]::Allow
-  foreach ($sid in @('S-1-5-32-544', 'S-1-5-18')) {
-    $account = New-Object System.Security.Principal.SecurityIdentifier($sid)
-    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($account, $rights, $inherit, $prop, $allow)
+  $admin = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'
+  foreach ($sid in @($admin, (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18'))) {
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, $rights, $inherit, $prop, $allow)
     $acl.AddAccessRule($rule)
   }
   $created = [System.IO.Directory]::CreateDirectory($root, $acl)
-  [System.IO.Directory]::SetAccessControl($created.FullName, $acl)
-  return [System.IO.Path]::GetFullPath($created.FullName)
+  $full = [System.IO.Path]::GetFullPath($created.FullName)
+  $script:SetupWorkRoot = $full
+  $acl.SetOwner($admin)
+  [System.IO.Directory]::SetAccessControl($full, $acl)
+  Assert-SetupNotReparsePoint $full 'the setup work directory'
+  if (@([System.IO.Directory]::GetFileSystemEntries($full)).Count -gt 0) {
+    Write-Output 'Setup work directory already exists. Nothing was installed.'
+    exit 1
+  }
+  $owner = ([System.IO.Directory]::GetAccessControl($full)).GetOwner([System.Security.Principal.SecurityIdentifier])
+  if ([string]$owner.Value -ne 'S-1-5-32-544') {
+    Write-Output 'Setup work directory owner is not Administrators. Nothing was installed.'
+    exit 1
+  }
+  return $full
 }
 
 function Copy-SetupVerifiedTree {
@@ -333,8 +386,10 @@ function Copy-SetupVerifiedTree {
     [Parameter(Mandatory = $true)][string]$Source,
     [Parameter(Mandatory = $true)][string]$Destination,
     [Parameter(Mandatory = $true)]$Listed,
-    [Parameter(Mandatory = $true)]$Tags
+    [Parameter(Mandatory = $true)]$Tags,
+    [Parameter(Mandatory = $true)]$Pinned
   )
+  Assert-SetupNotReparsePoint $Destination 'the setup work directory'
   foreach ($rel in @(Get-SetupRelativeFiles $Source)) {
     $kind = Get-SetupPathKind $rel $Listed $Tags
     if ($kind -eq 'ignore') { continue }
@@ -352,7 +407,14 @@ function Copy-SetupVerifiedTree {
     if ($parent -and -not (Test-Path -LiteralPath $parent)) {
       New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
-    $bytes = [System.IO.File]::ReadAllBytes($from)
+    if ($parent) { Assert-SetupNotReparsePoint $parent $rel }
+    if (Test-Path -LiteralPath $to) { Assert-SetupNotReparsePoint $to $rel }
+    $bytes = $null
+    if ($Pinned.ContainsKey($rel)) { $bytes = [byte[]]$Pinned[$rel] }
+    else {
+      Assert-SetupNotReparsePoint $from $rel
+      $bytes = [System.IO.File]::ReadAllBytes($from)
+    }
     [System.IO.File]::WriteAllBytes($to, $bytes)
   }
 }
@@ -369,13 +431,20 @@ try {
   try {
     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
   } catch {
-    Write-Output 'Execution policy is overridden. Nothing was installed.'
+    Write-Output 'Execution policy is overridden. Run Get-ExecutionPolicy -List. Nothing was installed.'
     exit 1
   }
   $effectivePolicy = [string](Get-ExecutionPolicy)
   if ($effectivePolicy -ne 'Bypass' -and $effectivePolicy -ne 'Unrestricted') {
-    Write-Output 'Execution policy is overridden. Nothing was installed.'
+    Write-Output 'Execution policy is overridden. Run Get-ExecutionPolicy -List. Nothing was installed.'
     exit 1
+  }
+  if (-not [string]::IsNullOrWhiteSpace($Source)) {
+    try { $Source = [System.IO.Path]::GetFullPath($Source) }
+    catch {
+      Write-Output 'The -Source path is not valid. Nothing was installed.'
+      exit 1
+    }
   }
   $packageRoot = Resolve-SetupExeDirectory
   if ([string]::IsNullOrWhiteSpace($packageRoot)) {
@@ -383,16 +452,9 @@ try {
     exit 1
   }
   Assert-SetupPackageHashes $packageRoot
+  $verified = $script:SetupVerified
   $script:SetupWorkRoot = New-SetupAdminWorkRoot
-  $sumsPath = Join-Path -Path $packageRoot -ChildPath 'SHA256SUMS.txt'
-  $sumsText = [System.IO.File]::ReadAllText($sumsPath)
-  $listed = @{}
-  foreach ($line in @($sumsText -split "`n")) {
-    if ([string]::IsNullOrWhiteSpace($line)) { continue }
-    if ($line -match '^([0-9a-f]{64})  (.+)$') { $listed[$Matches[2]] = $Matches[1] }
-  }
-  $tags = Get-SetupApprovedTags $packageRoot $listed
-  Copy-SetupVerifiedTree -Source $packageRoot -Destination $script:SetupWorkRoot -Listed $listed -Tags $tags
+  Copy-SetupVerifiedTree -Source $packageRoot -Destination $script:SetupWorkRoot -Listed $verified.Listed -Tags $verified.Tags -Pinned $verified.Pinned
   Assert-SetupPackageHashes $script:SetupWorkRoot
   $planPath = Find-SetupPlanPath $script:SetupWorkRoot
   if (-not $planPath) {

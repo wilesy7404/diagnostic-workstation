@@ -151,6 +151,19 @@ try {
   Assert-True ($forward.OfflineOnly -eq $true -and $forward.VerifyOnly -eq $true) 'forwarded switches were dropped'
   Assert-True (-not $forward.ContainsKey('AllowDowngrade')) 'an unset switch was forwarded'
   Assert-True (-not $forward.ContainsKey('AllowHarnessFailSwap')) 'the harness swap switch was forwarded'
+  $sourceTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('dw-source-' + [guid]::NewGuid().ToString('n'))
+  New-Item -ItemType Directory -Force -Path $sourceTemp | Out-Null
+  $previousDirectory = [Environment]::CurrentDirectory
+  try {
+    [Environment]::CurrentDirectory = $sourceTemp
+    $relativeSource = Get-SetupForwardParameters -Brand 'mercedes' -Source 'payload'
+    $expectedSource = [System.IO.Path]::GetFullPath((Join-Path -Path $sourceTemp -ChildPath 'payload'))
+    Assert-True ([System.IO.Path]::IsPathRooted([string]$relativeSource.Source)) 'relative -Source was forwarded as a relative path'
+    Assert-True ([string]$relativeSource.Source -ceq $expectedSource) 'relative -Source was not resolved from the current directory'
+  } finally {
+    [Environment]::CurrentDirectory = $previousDirectory
+    if (Test-Path -LiteralPath $sourceTemp) { Remove-Item -LiteralPath $sourceTemp -Recurse -Force }
+  }
 
   $readme = [System.IO.File]::ReadAllText((Join-Path -Path $extracted -ChildPath 'README-INSTALL.txt'))
   Assert-True ($readme.Contains('offline\<tag>\workstation.zip')) 'README does not document the offline zip'
@@ -165,7 +178,7 @@ try {
   Assert-True ($readme.Contains('SmartScreen')) 'README does not mention SmartScreen'
   Assert-True ($readme.Contains('More info')) 'README does not give the SmartScreen workaround'
   Assert-True ($readme.Contains('Run anyway')) 'README does not give the SmartScreen workaround'
-  Assert-True ($readme.Contains('Execution policy is overridden. Nothing was installed.')) 'README does not document an overridden execution policy'
+  Assert-True ($readme.Contains('Execution policy is overridden. Run Get-ExecutionPolicy -List. Nothing was installed.')) 'README does not document an overridden execution policy'
   Assert-True ($readme.Contains('desktop.ini')) 'README does not ignore desktop.ini'
   Assert-True ($readme.Contains('admin-only')) 'README does not document the admin-only copy'
 
@@ -183,7 +196,13 @@ try {
   Assert-True ($setupText.Contains('desktop.ini') -and $setupText.Contains('Thumbs.db')) 'Setup.ps1 does not ignore desktop clutter'
   Assert-True ($setupText.Contains('AllowHarnessFailSwap')) 'Setup.ps1 does not drop the harness swap switch'
   Assert-True ($setupText.Contains("GetFolderPath('System')")) 'Setup.ps1 does not locate Windows PowerShell from the system directory'
-  Assert-True ($setupText.Contains('Execution policy is overridden. Nothing was installed.')) 'Setup.ps1 does not report an overridden execution policy'
+  Assert-True ($setupText.Contains('Execution policy is overridden. Run Get-ExecutionPolicy -List. Nothing was installed.')) 'Setup.ps1 does not report an overridden execution policy'
+  Assert-True ($setupText.Contains('GetFullPath($Source)')) 'Setup.ps1 does not resolve -Source before the copy'
+  Assert-True ($setupText.Contains('StringComparer]::Ordinal')) 'Setup.ps1 does not compare listed paths case-exactly'
+  Assert-True ($setupText.Contains('ReparsePoint')) 'Setup.ps1 does not refuse reparse points'
+  Assert-True ($setupText.Contains('SetOwner')) 'Setup.ps1 does not set the work directory owner'
+  Assert-True ($readme.Contains('Get-ExecutionPolicy -List')) 'README does not suggest Get-ExecutionPolicy -List'
+  Assert-True ($planText.Contains('GetFullPath($Source)')) 'SetupPlan.ps1 forwards a relative -Source'
   Assert-True ($setupText.Contains('[string](Get-ExecutionPolicy)')) 'Setup.ps1 does not check the effective execution policy'
   Assert-True ($setupText.Contains('S-1-5-32-544') -and $setupText.Contains('S-1-5-18') -and $setupText.Contains('SetAccessRuleProtection')) 'Setup.ps1 does not keep the work directory admin-only'
   Assert-True ($setupText.Contains("'-' + [string]`$key + ':' + [string]`$value")) 'child arguments are not passed as -Key:value'

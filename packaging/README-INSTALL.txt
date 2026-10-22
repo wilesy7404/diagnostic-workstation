@@ -94,13 +94,14 @@ and SHA-256 the same way it checks a download. The tag must be one pinned
 in that catalog. Any other extra file is refused. Files named desktop.ini
 and Thumbs.db are ignored. Pass -OfflineOnly to skip the network.
 -Source <folder> is also accepted and is checked the same way.
+A relative -Source is resolved from the current directory before the package is copied.
 
 Setup.exe copies the checked files into an admin-only folder under
 ProgramData. Only Administrators and SYSTEM can read it. Setup.exe runs
 from that copy, then deletes the folder when it exits.
 
 If Group Policy overrides the execution policy, Setup.exe stops with
-"Execution policy is overridden. Nothing was installed."
+"Execution policy is overridden. Run Get-ExecutionPolicy -List. Nothing was installed."
 
 Windows Update and Windows Defender
 ------------------------------------
