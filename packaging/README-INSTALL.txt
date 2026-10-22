@@ -90,8 +90,17 @@ Examples:
   offline\bmw-v1.0.2-beta.1\update-manifest.json
 
 Install-Master.ps1 checks that pair against catalog\catalog.json for size
-and SHA-256 the same way it checks a download. Pass -OfflineOnly to skip
-the network. -Source <folder> is also accepted and is checked the same way.
+and SHA-256 the same way it checks a download. The tag must be one pinned
+in that catalog. Any other extra file is refused. Files named desktop.ini
+and Thumbs.db are ignored. Pass -OfflineOnly to skip the network.
+-Source <folder> is also accepted and is checked the same way.
+
+Setup.exe copies the checked files into an admin-only folder under
+ProgramData. Only Administrators and SYSTEM can read it. Setup.exe runs
+from that copy, then deletes the folder when it exits.
+
+If Group Policy overrides the execution policy, Setup.exe stops with
+"Execution policy is overridden. Nothing was installed."
 
 Windows Update and Windows Defender
 ------------------------------------
@@ -117,7 +126,9 @@ Setup.exe contains the SHA-256 of SHA256SUMS.txt, so that file cannot list
 Setup.exe. On startup, before anything else, Setup.exe checks SHA256SUMS.txt
 against the embedded hash, then checks every listed file. It stops with a
 nonzero exit if a hash does not match, a listed file is missing, or an
-unlisted extra file is present. Nothing is installed after a failed check.
+unlisted extra file is present. An offline payload for a pinned tag, and
+desktop.ini or Thumbs.db, are not extra files. Nothing is installed after
+a failed check.
 
 The .sha256 file published next to the zip is the SHA-256 of
 DiagnosticWorkstation-Setup.zip, which includes SHA256SUMS.txt and Setup.exe.

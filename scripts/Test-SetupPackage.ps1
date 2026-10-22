@@ -150,6 +150,7 @@ try {
   Assert-True ($forward.Brand -eq 'mercedes' -and $forward.Channel -eq 'beta' -and $forward.Tag -eq 'mercedes-v0.1.3-beta.4') 'forwarded parameters dropped the brand'
   Assert-True ($forward.OfflineOnly -eq $true -and $forward.VerifyOnly -eq $true) 'forwarded switches were dropped'
   Assert-True (-not $forward.ContainsKey('AllowDowngrade')) 'an unset switch was forwarded'
+  Assert-True (-not $forward.ContainsKey('AllowHarnessFailSwap')) 'the harness swap switch was forwarded'
 
   $readme = [System.IO.File]::ReadAllText((Join-Path -Path $extracted -ChildPath 'README-INSTALL.txt'))
   Assert-True ($readme.Contains('offline\<tag>\workstation.zip')) 'README does not document the offline zip'
@@ -164,6 +165,9 @@ try {
   Assert-True ($readme.Contains('SmartScreen')) 'README does not mention SmartScreen'
   Assert-True ($readme.Contains('More info')) 'README does not give the SmartScreen workaround'
   Assert-True ($readme.Contains('Run anyway')) 'README does not give the SmartScreen workaround'
+  Assert-True ($readme.Contains('Execution policy is overridden. Nothing was installed.')) 'README does not document an overridden execution policy'
+  Assert-True ($readme.Contains('desktop.ini')) 'README does not ignore desktop.ini'
+  Assert-True ($readme.Contains('admin-only')) 'README does not document the admin-only copy'
 
   $setupText = [System.IO.File]::ReadAllText((Join-Path -Path (Join-Path -Path (Join-Path -Path $repo -ChildPath 'installer') -ChildPath 'Master') -ChildPath 'Setup.ps1'))
   $planText = [System.IO.File]::ReadAllText((Join-Path -Path (Join-Path -Path (Join-Path -Path (Join-Path -Path $repo -ChildPath 'installer') -ChildPath 'Master') -ChildPath 'lib') -ChildPath 'SetupPlan.ps1'))
@@ -176,6 +180,13 @@ try {
   Assert-True ($setupText.Contains('__EMBEDDED_SHA256SUMS__')) 'Setup.ps1 has no SHA256SUMS embed token'
   Assert-True ($setupText.Contains('SHA-256 mismatch for')) 'Setup.ps1 does not refuse a checksum mismatch'
   Assert-True ($setupText.Contains('Unlisted extra file')) 'Setup.ps1 does not refuse an unlisted file'
+  Assert-True ($setupText.Contains('desktop.ini') -and $setupText.Contains('Thumbs.db')) 'Setup.ps1 does not ignore desktop clutter'
+  Assert-True ($setupText.Contains('AllowHarnessFailSwap')) 'Setup.ps1 does not drop the harness swap switch'
+  Assert-True ($setupText.Contains("GetFolderPath('System')")) 'Setup.ps1 does not locate Windows PowerShell from the system directory'
+  Assert-True ($setupText.Contains('Execution policy is overridden. Nothing was installed.')) 'Setup.ps1 does not report an overridden execution policy'
+  Assert-True ($setupText.Contains('[string](Get-ExecutionPolicy)')) 'Setup.ps1 does not check the effective execution policy'
+  Assert-True ($setupText.Contains('S-1-5-32-544') -and $setupText.Contains('S-1-5-18') -and $setupText.Contains('SetAccessRuleProtection')) 'Setup.ps1 does not keep the work directory admin-only'
+  Assert-True ($setupText.Contains("'-' + [string]`$key + ':' + [string]`$value")) 'child arguments are not passed as -Key:value'
   Assert-True (-not $setupText.Contains('Start-Process')) 'Setup.ps1 uses the Start-Process cmdlet'
   Assert-True (-not $setupText.Contains('Out-File')) 'Setup.ps1 uses Out-File'
   Assert-True (-not $planText.Contains('Start-Process')) 'SetupPlan.ps1 starts a separate process'

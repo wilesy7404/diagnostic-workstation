@@ -112,6 +112,43 @@ try {
     [System.IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), $utf8)
   }
 
+  function Write-SwapStub {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $lines = @(
+      '[CmdletBinding()]',
+      'param(',
+      '  [string]$Brand,',
+      '  [string]$Channel,',
+      '  [string]$Tag,',
+      '  [string]$Source,',
+      '  [switch]$OfflineOnly,',
+      '  [switch]$VerifyOnly,',
+      '  [switch]$AllowDowngrade,',
+      '  [switch]$Library,',
+      '  [switch]$ElevatedRelaunch',
+      ')',
+      '$go = [string]$env:DW_SETUP_SWAP_GO',
+      '$out = [string]$env:DW_SETUP_SWAP_PATH',
+      'if ([string]::IsNullOrWhiteSpace($go) -or [string]::IsNullOrWhiteSpace($out)) { exit 13 }',
+      '$deadline = (Get-Date).AddSeconds(45)',
+      'while (-not (Test-Path -LiteralPath $go)) {',
+      '  if ((Get-Date) -gt $deadline) { exit 12 }',
+      '  Start-Sleep -Milliseconds 200',
+      '}',
+      '[System.IO.File]::WriteAllText($out, $PSScriptRoot)',
+      'exit 0'
+    )
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), $utf8)
+  }
+
+  function Write-RawBytes {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][byte[]]$Bytes)
+    $parent = Split-Path -Parent $Path
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    [System.IO.File]::WriteAllBytes($Path, $Bytes)
+  }
+
   $caseRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('dw-setup-cases-' + [guid]::NewGuid().ToString('n'))
   New-Item -ItemType Directory -Force -Path $caseRoot | Out-Null
   $nupkg = Join-Path -Path $caseRoot -ChildPath 'ps2exe.nupkg'
@@ -141,6 +178,24 @@ try {
     $tamperedBytes[$readmeBytes.Length] = 88
     [System.IO.File]::WriteAllBytes($readmePath, $tamperedBytes)
     Write-ZoneIdentifier $tamperRoot
+    $offlineOk = Join-Path -Path $caseRoot -ChildPath 'offline-ok'
+    Copy-VerifiedTree $extracted $offlineOk
+    $okTag = 'mercedes-v0.1.3-beta.4'
+    Write-RawBytes (Join-PackageRelative $offlineOk ('offline/' + $okTag + '/workstation.zip')) ([byte[]](1, 2, 3, 4))
+    Write-RawBytes (Join-PackageRelative $offlineOk ('offline/' + $okTag + '/update-manifest.json')) ([byte[]](123, 125, 10))
+    Write-RawBytes (Join-Path -Path $offlineOk -ChildPath 'desktop.ini') ([byte[]](59, 10))
+    Write-RawBytes (Join-PackageRelative $offlineOk 'brands/mercedes/Thumbs.db') ([byte[]](0, 1))
+    Write-ZoneIdentifier $offlineOk
+    $offlineBad = Join-Path -Path $caseRoot -ChildPath 'offline-bad'
+    Copy-VerifiedTree $extracted $offlineBad
+    Write-RawBytes (Join-PackageRelative $offlineBad 'offline/not-a-tag/workstation.zip') ([byte[]](9, 9, 9))
+    Write-ZoneIdentifier $offlineBad
+    $swapRoot = Join-Path -Path $caseRoot -ChildPath 'swap'
+    Copy-VerifiedTree $extracted $swapRoot
+    Write-SwapStub (Join-PackageRelative $swapRoot 'installer/Master/Install-Master.ps1')
+    Update-StagedSetupExe -StageRoot $swapRoot -Nupkg $nupkg
+    Write-RawBytes (Join-Path -Path $swapRoot -ChildPath 'desktop.ini') ([byte[]](59, 10))
+    Write-ZoneIdentifier $swapRoot
 
     Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy Restricted -Force
     Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Restricted -Force
@@ -165,7 +220,74 @@ try {
     $tamperText = @($tampered.Lines) -join "`n"
     if ($tamperText -notmatch 'SHA-256 mismatch for README-INSTALL\.txt') { throw 'tampered package did not refuse the checksum' }
     if ($tamperText -notmatch 'Nothing was installed') { throw 'tampered package did not say nothing was installed' }
+
+    $offlinePass = Invoke-SetupCaptured -File (Join-Path -Path $offlineOk -ChildPath 'Setup.exe') -ArgumentList @('-Brand', 'mercedes', '-WhatIf')
+    Write-Output 'Setup.exe offline payload'
+    foreach ($line in @($offlinePass.Lines)) { Write-Output $line }
+    if ([int]$offlinePass.ExitCode -ne 0) { throw ("approved offline payload was refused: {0}" -f ((@($offlinePass.Lines) -join ' | '))) }
+    if ((@($offlinePass.Lines) -join "`n") -notmatch 'Resolved brand: mercedes') { throw 'approved offline payload did not resolve the brand' }
+
+    $offlineRefuse = Invoke-SetupCaptured -File (Join-Path -Path $offlineBad -ChildPath 'Setup.exe') -ArgumentList @('-Brand', 'mercedes', '-WhatIf')
+    Write-Output 'Setup.exe unapproved offline tag'
+    foreach ($line in @($offlineRefuse.Lines)) { Write-Output $line }
+    if ([int]$offlineRefuse.ExitCode -eq 0) { throw 'unapproved offline tag was accepted' }
+    if ((@($offlineRefuse.Lines) -join "`n") -notmatch 'Unlisted extra file offline/not-a-tag/workstation\.zip') { throw 'unapproved offline tag was not refused' }
+
+    $swapGo = Join-Path -Path $caseRoot -ChildPath 'swap-go.txt'
+    $swapPath = Join-Path -Path $caseRoot -ChildPath 'swap-path.txt'
+    $env:DW_SETUP_SWAP_GO = $swapGo
+    $env:DW_SETUP_SWAP_PATH = $swapPath
+    $swapInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $swapInfo.FileName = Join-Path -Path $swapRoot -ChildPath 'Setup.exe'
+    $swapInfo.Arguments = '-Brand mercedes'
+    $swapInfo.UseShellExecute = $false
+    $swapInfo.WorkingDirectory = $swapRoot
+    $swapProc = New-Object System.Diagnostics.Process
+    $swapProc.StartInfo = $swapInfo
+    $started = Get-Date
+    [void]$swapProc.Start()
+    $programData = [Environment]::GetFolderPath('CommonApplicationData')
+    $adminCopy = $null
+    $deadline = (Get-Date).AddSeconds(40)
+    while ((Get-Date) -lt $deadline) {
+      if ($swapProc.HasExited) { throw ("swap setup exited early {0}" -f $swapProc.ExitCode) }
+      foreach ($dir in @(Get-ChildItem -LiteralPath $programData -Directory -Filter 'DiagnosticWorkstation-Setup-*' -ErrorAction SilentlyContinue)) {
+        if ($dir.CreationTime -lt $started.AddSeconds(-2)) { continue }
+        $stubPath = Join-Path -Path $dir.FullName -ChildPath 'installer\Master\Install-Master.ps1'
+        if (-not (Test-Path -LiteralPath $stubPath)) { continue }
+        $stubText = [System.IO.File]::ReadAllText($stubPath)
+        if ($stubText.Contains('DW_SETUP_SWAP_GO')) { $adminCopy = $dir.FullName; break }
+      }
+      if ($adminCopy) { break }
+      Start-Sleep -Milliseconds 200
+    }
+    if (-not $adminCopy) { throw 'admin work directory was not created' }
+    $workAcl = [System.IO.Directory]::GetAccessControl($adminCopy)
+    if (-not $workAcl.AreAccessRulesProtected) { throw 'admin work directory inherits access rules' }
+    foreach ($ace in @($workAcl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+      $sid = [string]$ace.IdentityReference.Value
+      if ($sid -ne 'S-1-5-32-544' -and $sid -ne 'S-1-5-18') { throw "admin work directory allows $sid" }
+    }
+    Write-InstallerExitStub (Join-PackageRelative $swapRoot 'installer/Master/Install-Master.ps1') 11
+    [System.IO.File]::WriteAllText($swapGo, "go`n")
+    if (-not $swapProc.WaitForExit(20000)) { throw 'swap setup did not exit' }
+    if ([int]$swapProc.ExitCode -ne 0) { throw ("post-verify swap changed the exit code to {0}" -f $swapProc.ExitCode) }
+    if (-not (Test-Path -LiteralPath $swapPath)) { throw 'installer did not record its run path' }
+    $ranFrom = [System.IO.File]::ReadAllText($swapPath).Trim()
+    if (-not $ranFrom.StartsWith($adminCopy, [System.StringComparison]::OrdinalIgnoreCase)) { throw "installer ran from $ranFrom" }
+    $sourcePrefix = [System.IO.Path]::GetFullPath($swapRoot)
+    if ($ranFrom.StartsWith($sourcePrefix, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'installer ran from the user-writable folder' }
+    $swapped = [System.IO.File]::ReadAllText((Join-PackageRelative $swapRoot 'installer/Master/Install-Master.ps1'))
+    if ($swapped -notmatch 'exit 11') { throw 'source stub was not swapped' }
+    if (Test-Path -LiteralPath $adminCopy) { throw 'admin work directory was left behind' }
+    Remove-Item Env:DW_SETUP_SWAP_GO -ErrorAction SilentlyContinue
+    Remove-Item Env:DW_SETUP_SWAP_PATH -ErrorAction SilentlyContinue
   } finally {
+    if ($swapProc -and -not $swapProc.HasExited) {
+      try { $swapProc.Kill() } catch { }
+    }
+    Remove-Item Env:DW_SETUP_SWAP_GO -ErrorAction SilentlyContinue
+    Remove-Item Env:DW_SETUP_SWAP_PATH -ErrorAction SilentlyContinue
     if ($policySet) {
       foreach ($pair in @(
         @{ Scope = 'CurrentUser'; Value = $savedUser },
