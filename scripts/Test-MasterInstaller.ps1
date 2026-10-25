@@ -341,10 +341,12 @@ try {
     $found = @($plan.Preferences | Where-Object { $_.Name -eq $name })
     Assert-True ($found.Count -eq 1) "preference $name is missing from the Defender plan"
   }
-  foreach ($name in @('DisableAntiSpyware', 'DisableAntiVirus', 'DisableRealtimeMonitoring', 'DisableBehaviorMonitoring', 'DisableOnAccessProtection', 'DisableScanOnRealtimeEnable', 'DisableIOAVProtection', 'DisableScriptScanning')) {
+  foreach ($name in @('DisableAntiVirus', 'DisableRealtimeMonitoring', 'DisableBehaviorMonitoring', 'DisableOnAccessProtection', 'DisableScanOnRealtimeEnable', 'DisableIOAVProtection', 'DisableScriptScanning')) {
     $found = @($plan.Policies | Where-Object { $_.Name -eq $name })
     Assert-True ($found.Count -eq 1) "policy $name is missing from the Defender plan"
   }
+  Assert-True (@($plan.Policies | Where-Object { $_.Name -eq 'DisableAntiSpyware' }).Count -eq 0) 'DisableAntiSpyware is still written'
+  Assert-True ($blob.Contains('Tamper Protection reverts the DWORD')) 'DisableAntiSpyware skip is not explained'
   Assert-True (($plan.Services -join ',') -eq 'WinDefend,WdNisSvc,MDCoreSvc') 'observed Defender service list changed'
   Assert-True (-not ($blob.Contains('Set-Service'))) 'installer still changes a Defender service'
   Assert-True (-not ($blob.Contains('Stop-Service'))) 'installer still stops a Defender service'
@@ -403,8 +405,180 @@ try {
     if (-not (Test-SupervisorRelaunchBlocked $guardRoot)) { $relaunches.n++ }
   }
   Assert-True ($relaunches.n -eq 4) 'supervisor relaunched while install-in-progress.lock was held'
+  $ownedNonce = [string]$script:BrandInstallLockNonce
+  $refreshed = Set-BrandInstallLock $guardRoot
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$refreshed)) 'owned lock was not refreshed'
+  Assert-True ([string]$script:BrandInstallLockNonce -ceq $ownedNonce) 'owned refresh minted a new nonce'
+  $script:BrandInstallLockNonce = ('00' * 16)
+  Remove-BrandInstallLock $guardRoot
+  Assert-True (Test-SupervisorRelaunchBlocked $guardRoot) 'a mismatched nonce deleted the install lock'
+  $script:BrandInstallLockNonce = $ownedNonce
   Remove-BrandInstallLock $guardRoot
   Assert-True (-not (Test-SupervisorRelaunchBlocked $guardRoot)) 'supervisor lock was not removed'
+
+  $liveRoot = Join-Path $temp 'live-lock-root'
+  New-Item -ItemType Directory -Path $liveRoot | Out-Null
+  $sleeper = $null
+  if (Test-Path -LiteralPath '/bin/sleep') {
+    $sleeper = Start-Process -FilePath '/bin/sleep' -ArgumentList '60' -PassThru
+  }
+  Assert-True ($null -ne $sleeper) 'lock test could not start a live owner process'
+  $liveStart = $sleeper.StartTime.ToUniversalTime().ToString('o')
+  $liveRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $sleeper.Id
+    ownerStartUtc = $liveStart
+    nonce = ('ab' * 16)
+    createdUtc = [datetimeoffset]::UtcNow.ToString('o')
+  }
+  $liveLockPath = Join-Path $liveRoot 'install-in-progress.lock'
+  Write-Utf8NoBom $liveLockPath (($liveRecord | ConvertTo-Json -Compress) + "`n")
+  $liveBefore = [System.IO.File]::ReadAllBytes($liveLockPath)
+  $liveLogs = Join-Path $temp 'live-lock-logs'
+  Assert-Throws { Set-BrandInstallLock -Root $liveRoot -LogDirectory $liveLogs } 'already holds install-in-progress.lock'
+  $liveAfter = [System.IO.File]::ReadAllBytes($liveLockPath)
+  Assert-True ((Get-BytesSha256 $liveBefore) -eq (Get-BytesSha256 $liveAfter)) 'a live lock was rewritten'
+  $agedRoot = Join-Path $temp 'aged-live-lock-root'
+  New-Item -ItemType Directory -Path $agedRoot | Out-Null
+  $agedRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $sleeper.Id
+    ownerStartUtc = $liveStart
+    nonce = ('cd' * 16)
+    createdUtc = '2020-01-01T00:00:00.0000000Z'
+  }
+  $agedLockPath = Join-Path $agedRoot 'install-in-progress.lock'
+  Write-Utf8NoBom $agedLockPath (($agedRecord | ConvertTo-Json -Compress) + "`n")
+  $agedBefore = [System.IO.File]::ReadAllBytes($agedLockPath)
+  $agedLogs = Join-Path $temp 'aged-live-lock-logs'
+  Assert-Throws { Set-BrandInstallLock -Root $agedRoot -LogDirectory $agedLogs } 'already holds install-in-progress.lock'
+  $agedAfter = [System.IO.File]::ReadAllBytes($agedLockPath)
+  Assert-True ((Get-BytesSha256 $agedBefore) -eq (Get-BytesSha256 $agedAfter)) 'a live lock older than 2 hours was reclaimed'
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $agedLogs 'install-journal.log'))) 'a live lock older than 2 hours wrote a reclaim journal'
+  $reusedRoot = Join-Path $temp 'reused-lock-root'
+  New-Item -ItemType Directory -Path $reusedRoot | Out-Null
+  $reusedRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $sleeper.Id
+    ownerStartUtc = '2019-01-01T00:00:00.0000000Z'
+    nonce = ('12' * 16)
+    createdUtc = [datetimeoffset]::UtcNow.ToString('o')
+  }
+  Write-Utf8NoBom (Join-Path $reusedRoot 'install-in-progress.lock') (($reusedRecord | ConvertTo-Json -Compress) + "`n")
+  $reusedLogs = Join-Path $temp 'reused-lock-logs'
+  $reusedHeld = Set-BrandInstallLock -Root $reusedRoot -LogDirectory $reusedLogs
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$reusedHeld)) 'a reused PID lock was not reclaimed'
+  $reusedJournal = [System.IO.File]::ReadAllText((Join-Path $reusedLogs 'install-journal.log'))
+  Assert-True ($reusedJournal.Contains('"step":"install-lock-reclaimed"') -and $reusedJournal.Contains('"reason":"pid-reused"')) 'reused PID reclaim was not logged'
+  $timeoutRoot = Join-Path $temp 'timeout-lock-root'
+  New-Item -ItemType Directory -Path $timeoutRoot | Out-Null
+  $timeoutRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    createdUtc = '2020-01-01T00:00:00.0000000Z'
+  }
+  Write-Utf8NoBom (Join-Path $timeoutRoot 'install-in-progress.lock') (($timeoutRecord | ConvertTo-Json -Compress) + "`n")
+  $timeoutLogs = Join-Path $temp 'timeout-lock-logs'
+  $timeoutHeld = Set-BrandInstallLock -Root $timeoutRoot -LogDirectory $timeoutLogs
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$timeoutHeld)) 'a timed-out lock with no PID was not reclaimed'
+  $timeoutJournal = [System.IO.File]::ReadAllText((Join-Path $timeoutLogs 'install-journal.log'))
+  Assert-True ($timeoutJournal.Contains('"step":"install-lock-reclaimed"') -and $timeoutJournal.Contains('"reason":"timeout"')) 'timeout reclaim was not logged'
+  $deadRoot = Join-Path $temp 'dead-lock-root'
+  New-Item -ItemType Directory -Path $deadRoot | Out-Null
+  $deadRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = 2147483646
+    ownerStartUtc = '2020-01-01T00:00:00.0000000Z'
+    nonce = ('ef' * 16)
+    createdUtc = [datetimeoffset]::UtcNow.ToString('o')
+  }
+  Write-Utf8NoBom (Join-Path $deadRoot 'install-in-progress.lock') (($deadRecord | ConvertTo-Json -Compress) + "`n")
+  $deadLogs = Join-Path $temp 'dead-lock-logs'
+  $deadHeld = Set-BrandInstallLock -Root $deadRoot -LogDirectory $deadLogs
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$deadHeld)) 'a dead-pid lock was not reclaimed'
+  $deadJournal = [System.IO.File]::ReadAllText((Join-Path $deadLogs 'install-journal.log'))
+  Assert-True ($deadJournal.Contains('"step":"install-lock-reclaimed"') -and $deadJournal.Contains('"reason":"dead-pid"')) 'dead-pid reclaim was not logged'
+  $blankRoot = Join-Path $temp 'blank-start-lock-root'
+  New-Item -ItemType Directory -Path $blankRoot | Out-Null
+  $blankRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $sleeper.Id
+    ownerStartUtc = ''
+    nonce = ('34' * 16)
+    createdUtc = [datetimeoffset]::UtcNow.ToString('o')
+  }
+  $blankLockPath = Join-Path $blankRoot 'install-in-progress.lock'
+  Write-Utf8NoBom $blankLockPath (($blankRecord | ConvertTo-Json -Compress) + "`n")
+  $blankBefore = [System.IO.File]::ReadAllBytes($blankLockPath)
+  $blankLogs = Join-Path $temp 'blank-start-lock-logs'
+  Assert-Throws { Set-BrandInstallLock -Root $blankRoot -LogDirectory $blankLogs } 'already holds install-in-progress.lock'
+  $blankAfter = [System.IO.File]::ReadAllBytes($blankLockPath)
+  Assert-True ((Get-BytesSha256 $blankBefore) -eq (Get-BytesSha256 $blankAfter)) 'a live lock with a blank owner start was reclaimed'
+  $blankOldRoot = Join-Path $temp 'blank-start-old-lock-root'
+  New-Item -ItemType Directory -Path $blankOldRoot | Out-Null
+  $blankOldRecord = [ordered]@{
+    schema = 'diagnostic-workstation.install-lock/v1'
+    ownerPid = $sleeper.Id
+    ownerStartUtc = ''
+    nonce = ('56' * 16)
+    createdUtc = '2020-01-01T00:00:00.0000000Z'
+  }
+  Write-Utf8NoBom (Join-Path $blankOldRoot 'install-in-progress.lock') (($blankOldRecord | ConvertTo-Json -Compress) + "`n")
+  $blankOldLogs = Join-Path $temp 'blank-start-old-lock-logs'
+  $blankOldHeld = Set-BrandInstallLock -Root $blankOldRoot -LogDirectory $blankOldLogs
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$blankOldHeld)) 'an old lock with a blank owner start was not reclaimed'
+  $blankOldJournal = [System.IO.File]::ReadAllText((Join-Path $blankOldLogs 'install-journal.log'))
+  Assert-True ($blankOldJournal.Contains('"step":"install-lock-reclaimed"') -and $blankOldJournal.Contains('"reason":"timeout"')) 'blank owner start did not fall back to age'
+  if ($sleeper -and -not $sleeper.HasExited) { Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue }
+
+  $failWriteRoot = Join-Path $temp 'fail-write-lock-root'
+  New-Item -ItemType Directory -Path $failWriteRoot | Out-Null
+  $failWritePath = Join-Path $failWriteRoot 'install-in-progress.lock'
+  $script:BrandInstallLockFailWrite = $true
+  Assert-Throws { New-BrandInstallLockFile $failWritePath ('aa' * 16) } 'lock write failed'
+  $script:BrandInstallLockFailWrite = $false
+  Assert-True (-not (Test-Path -LiteralPath $failWritePath)) 'a failed lock write left an empty lock'
+  $failWriteHeld = Set-BrandInstallLock $failWriteRoot
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$failWriteHeld)) 'install stayed blocked after a failed lock write'
+  Remove-BrandInstallLock $failWriteRoot
+
+  $restoreRoot = Join-Path $temp 'restore-lock-root'
+  New-Item -ItemType Directory -Path $restoreRoot | Out-Null
+  $restoreLock = Join-Path $restoreRoot 'install-in-progress.lock'
+  $restoreClaim = $restoreLock + '.reclaim-empty'
+  Write-Utf8NoBom $restoreClaim "claim-bytes`n"
+  [System.IO.File]::WriteAllBytes($restoreLock, (New-Object byte[] 0))
+  Restore-MovedLock $restoreClaim $restoreLock
+  Assert-True (([System.IO.File]::ReadAllText($restoreLock)) -eq "claim-bytes`n") 'an empty lock blocked restore of the moved bytes'
+  Assert-True (-not (Test-Path -LiteralPath $restoreClaim)) 'the claim remained after restore onto an empty lock'
+  $keptClaim = $restoreLock + '.reclaim-kept'
+  Write-Utf8NoBom $restoreLock 'winner-bytes'
+  Write-Utf8NoBom $keptClaim 'stolen-bytes'
+  Restore-MovedLock $keptClaim $restoreLock
+  Assert-True (([System.IO.File]::ReadAllText($restoreLock)) -eq 'winner-bytes') 'restore replaced a non-empty lock'
+  Assert-True (([System.IO.File]::ReadAllText($keptClaim)) -eq 'stolen-bytes') 'a blocked restore deleted the claim'
+
+  $sweepRoot = Join-Path $temp 'sweep-lock-root'
+  New-Item -ItemType Directory -Path $sweepRoot | Out-Null
+  $sweepLock = Join-Path $sweepRoot 'install-in-progress.lock'
+  $staleClaim = $sweepLock + '.reclaim-stale'
+  $staleRefresh = $sweepLock + '.refresh-stale'
+  $staleBak = $sweepLock + '.refresh-bak'
+  $freshRelease = $sweepLock + '.release-fresh'
+  Write-Utf8NoBom $staleClaim 'stale'
+  Write-Utf8NoBom $staleRefresh 'stale-refresh'
+  Write-Utf8NoBom $staleBak 'bak'
+  Write-Utf8NoBom $freshRelease 'fresh'
+  $staleStamp = [datetime]::UtcNow.AddHours(-3)
+  (Get-Item -LiteralPath $staleClaim).LastWriteTimeUtc = $staleStamp
+  (Get-Item -LiteralPath $staleRefresh).LastWriteTimeUtc = $staleStamp
+  (Get-Item -LiteralPath $staleBak).LastWriteTimeUtc = $staleStamp
+  $sweepHeld = Set-BrandInstallLock $sweepRoot
+  Assert-True (-not [string]::IsNullOrWhiteSpace([string]$sweepHeld)) 'sidecar sweep blocked a new lock'
+  Assert-True (-not (Test-Path -LiteralPath $staleClaim)) 'a stale reclaim file was left behind'
+  Assert-True (-not (Test-Path -LiteralPath $staleRefresh)) 'a stale refresh file was left behind'
+  Assert-True (-not (Test-Path -LiteralPath $staleBak)) 'a stale refresh backup was left behind'
+  Assert-True (Test-Path -LiteralPath $freshRelease) 'a fresh release file was deleted'
+  Remove-BrandInstallLock $sweepRoot
 
   $supervisorRoot = Join-Path $temp 'supervisor-root'
   $stoppedIds = New-Object System.Collections.Generic.List[int]
@@ -468,8 +642,8 @@ try {
   Assert-True ($catalogText -notmatch "`r") 'catalog.json contains CR'
   $crlfBytes = [System.Text.Encoding]::UTF8.GetBytes(($catalogText -replace "(?<!\r)`n", "`r`n"))
   Assert-True ((Get-BytesSha256 $crlfBytes) -ne $pin) 'CRLF catalog.json must not satisfy the pin'
-  $attrText = (& git -C $repo check-attr text -- catalog/catalog.json catalog/catalog.sha256 catalog/catalog.json.release.sig releases/versions.lock.json tools/security/wub/tool-manifest.json tools/security/wub/Wub_x64.exe 2>&1 | Out-String)
-  foreach ($attrPath in @('catalog/catalog.json', 'catalog/catalog.sha256', 'catalog/catalog.json.release.sig', 'releases/versions.lock.json', 'tools/security/wub/tool-manifest.json', 'tools/security/wub/Wub_x64.exe')) {
+  $attrText = (& git -C $repo check-attr text -- catalog/catalog.json catalog/catalog.sha256 catalog/catalog.json.release.sig releases/versions.lock.json tools/security/wub/tool-manifest.json tools/security/wub/Wub_x64.exe offline/mercedes-v0.1.3-beta.4/workstation.zip 2>&1 | Out-String)
+  foreach ($attrPath in @('catalog/catalog.json', 'catalog/catalog.sha256', 'catalog/catalog.json.release.sig', 'releases/versions.lock.json', 'tools/security/wub/tool-manifest.json', 'tools/security/wub/Wub_x64.exe', 'offline/mercedes-v0.1.3-beta.4/workstation.zip')) {
     Assert-True ($attrText -match [regex]::Escape("${attrPath}: text: unset")) "$attrPath is not byte-exact"
   }
   $harnessText = [System.IO.File]::ReadAllText((Join-Path $repo 'scripts/Invoke-VmInstallTest.ps1'))
@@ -480,6 +654,33 @@ try {
   Assert-True ($harnessText -match '\$expected = ''No approved''') 'unpinned check does not name its expected rejection'
   Assert-True ($harnessText -match '\$expected = ''belongs to''') 'wrong-brand check does not name its expected rejection'
   Assert-True ($harnessText -match 'expected ''hash mismatch''') 'tamper check does not name its expected rejection'
+  Assert-True ($harnessText -match 'PASS with gaps \(\$notRunCount NOT RUN, \$unprovenCount NOT PROVEN\)') 'VM report headline does not name gaps'
+  Assert-True ($harnessText -match 'already holds install-in-progress.lock') 'live lock check does not name its refusal'
+  Assert-True ($harnessText -match 'install-lock-reclaimed') 'stale lock check does not require the reclaim journal'
+  Assert-True ($harnessText -match 'fail-swap.marker') 'in-install failure check does not arm the harness marker'
+  Assert-True ($harnessText -match '-AllowHarnessFailSwap') 'in-install failure check does not pass the harness switch'
+  Assert-True ($harnessText -match 'Harness SHA:') 'VM report does not record the harness SHA'
+  Assert-True ($harnessText -match 'Catalog SHA:') 'VM report does not record the catalog SHA'
+  Assert-True ($harnessText -match 'previous folder was restored') 'in-install failure check does not require the restored tree'
+  . (Join-Path $repo 'scripts/VmInstallVerdict.ps1')
+  $emptyPlan = [pscustomobject]@{ Policies = @([pscustomobject]@{ Name = 'DisableAntiVirus' }) }
+  $absentVerdict = Get-DisableAntiSpywarePolicyVerdict $emptyPlan @()
+  Assert-True ($absentVerdict.Status -eq 'PASS') 'absent DisableAntiSpyware was not a pass'
+  $planFixture = [pscustomobject]@{ Policies = @([pscustomobject]@{ Name = 'DisableAntiSpyware'; Value = 1 }) }
+  $planVerdict = Get-DisableAntiSpywarePolicyVerdict $planFixture @()
+  Assert-True ($planVerdict.Status -eq 'FAIL') 'a plan DisableAntiSpyware row was a pass'
+  $journalOne = @([pscustomobject]@{ step = 'defender-post'; commands = @([pscustomobject]@{ kind = 'Set-Policy'; name = 'DisableAntiSpyware'; value = 1 }) })
+  $journalZero = @([pscustomobject]@{ step = 'defender-post'; commands = @([pscustomobject]@{ kind = 'Set-Policy'; name = 'DisableAntiSpyware'; value = 0 }) })
+  Assert-True ((Get-DisableAntiSpywarePolicyVerdict $emptyPlan $journalOne).Status -eq 'FAIL') 'journal DisableAntiSpyware value 1 was a pass'
+  Assert-True ((Get-DisableAntiSpywarePolicyVerdict $emptyPlan $journalZero).Status -eq 'FAIL') 'journal DisableAntiSpyware value 0 was a pass'
+  $removeOnly = @([pscustomobject]@{ step = 'defender-post'; commands = @([pscustomobject]@{ kind = 'Remove-Policy'; name = 'DisableAntiSpyware' }) })
+  Assert-True ((Get-DisableAntiSpywarePolicyVerdict $emptyPlan $removeOnly).Status -eq 'PASS') 'a Remove-Policy cleanup was treated as a Set-Policy'
+  $otherStep = @([pscustomobject]@{ step = 'defender-failed'; commands = @([pscustomobject]@{ kind = 'Set-Policy'; name = 'DisableAntiSpyware'; value = 1 }) })
+  Assert-True ((Get-DisableAntiSpywarePolicyVerdict $emptyPlan $otherStep).Status -eq 'PASS') 'a non-post Set-Policy was counted'
+  Assert-True ((Get-CombinedStatus @([pscustomobject]@{ Status = 'PASS' }, [pscustomobject]@{ Status = 'NOT RUN' })) -eq 'NOT RUN') 'NOT RUN did not beat PASS'
+  Assert-True ((Get-CombinedStatus @([pscustomobject]@{ Status = 'NOT RUN' }, [pscustomobject]@{ Status = 'FAIL' })) -eq 'FAIL') 'FAIL did not beat NOT RUN'
+  Assert-True ((Get-CombinedStatus @([pscustomobject]@{ Status = 'NOT PROVEN' }, [pscustomobject]@{ Status = 'NOT RUN' })) -eq 'NOT PROVEN') 'NOT PROVEN did not beat NOT RUN'
+  Assert-True ($entry.Contains('Restart required.')) 'install does not say restart required'
   $loadedCatalog = Read-ApprovedCatalog (Join-Path $repo 'catalog/catalog.json') (Join-Path $repo 'catalog/catalog.sha256') (Join-Path $repo 'keys') (Join-Path $repo 'catalog/catalog.json.release.sig')
   Assert-True ([int]$loadedCatalog.Catalog.catalogSerial -eq 3) 'catalog serial'
   Assert-True ([string]$loadedCatalog.Catalog.signatureStatus -eq 'placeholder-untrusted') 'catalog signature status'
@@ -751,11 +952,39 @@ try {
     Assert-True ($hit.Count -eq 1) "disable did not set $($item.Name)"
     Assert-True ([string]$hit[0].value -eq [string]$item.Disable) "disable value for $($item.Name)"
   }
-  $spyware = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' -and $_.path -eq 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' })
-  Assert-True ($spyware.Count -eq 1 -and [int]$spyware[0].value -eq 1) 'DisableAntiSpyware was not set'
+  $spyware = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' })
+  Assert-True ($spyware.Count -eq 0) 'DisableAntiSpyware was written'
+  $antivirus = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiVirus' -and $_.path -eq 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' })
+  Assert-True ($antivirus.Count -eq 1 -and [int]$antivirus[0].value -eq 1) 'DisableAntiVirus was not set'
   $onAccess = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableOnAccessProtection' })
   Assert-True ($onAccess.Count -eq 1 -and [int]$onAccess[0].value -eq 1) 'on-access policy was not set'
   Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.kind -ne 'Set-MpPreference' -and $_.kind -ne 'Set-Policy' }).Count -eq 0) 'disable changed something other than preferences and policy'
+  $legacyCommands = New-Object System.Collections.Generic.List[object]
+  $legacyLogs = Join-Path $temp 'legacy-spyware-logs'
+  New-Item -ItemType Directory -Force -Path $legacyLogs | Out-Null
+  $legacyRegistry = {
+    param($Path, $Name)
+    if ($Path -eq 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -and $Name -eq 'DisableAntiSpyware') {
+      return [pscustomobject]@{ DisableAntiSpyware = 1 }
+    }
+    throw "registry value not present: $Path $Name"
+  }
+  $legacyLive = Get-DefenderLiveState -RegistryReader $legacyRegistry
+  $legacyObserved = @($legacyLive.policies | Where-Object { $_.name -eq 'DisableAntiSpyware' -and $_.path -eq 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' })
+  Assert-True ($legacyObserved.Count -eq 1 -and [bool]$legacyObserved[0].exists -and [int]$legacyObserved[0].value -eq 1) 'live reader did not see DisableAntiSpyware'
+  $legacySnap = Join-Path $temp 'legacy-spyware.json'
+  $legacy = Invoke-DefenderControl -Action 'disable' -LogDirectory $legacyLogs -SnapshotPath $legacySnap -RegistryReader $legacyRegistry -CommandSink { param($Command) $legacyCommands.Add($Command) } -TamperPrompt { param($Message) return $false }
+  Assert-True ($legacy.status -eq 'disabled') 'legacy DisableAntiSpyware cleanup did not finish disable'
+  Assert-True (@($legacyCommands | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 1) 'legacy DisableAntiSpyware was not removed'
+  Assert-True (@($legacyCommands | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 0) 'legacy cleanup wrote DisableAntiSpyware'
+  Assert-True (@($legacyCommands | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -ne 'DisableAntiSpyware' }).Count -eq 0) 'legacy cleanup removed another policy'
+  $legacyJournal = [System.IO.File]::ReadAllText((Join-Path $legacyLogs 'install-journal.log'))
+  Assert-True ($legacyJournal.Contains('"step":"defender-legacy-disableantispyware"')) 'legacy DisableAntiSpyware cleanup was not journaled'
+  Assert-True (Test-Path -LiteralPath (Join-Path $temp 'legacy-disableantispyware.removed')) 'legacy cleanup marker was not written'
+  $legacyAgain = New-Object System.Collections.Generic.List[object]
+  $legacyRepeat = Invoke-DefenderControl -Action 'disable' -LogDirectory $legacyLogs -SnapshotPath $legacySnap -RegistryReader $legacyRegistry -CommandSink { param($Command) $legacyAgain.Add($Command) } -TamperPrompt { param($Message) return $false }
+  Assert-True ($legacyRepeat.status -eq 'disabled') 'second disable failed after the legacy cleanup'
+  Assert-True (@($legacyAgain | Where-Object { $_.name -eq 'DisableAntiSpyware' }).Count -eq 0) 'legacy DisableAntiSpyware cleanup ran twice'
   Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.name -eq 'WinDefend' -or $_.name -eq 'WdNisSvc' -or $_.name -eq 'MDCoreSvc' }).Count -eq 0) 'disable issued a Defender service command'
   $shortcuts = Read-JsonFile (Join-Path $data 'shortcuts-mercedes.json')
   $shortcutBlob = $shortcuts | ConvertTo-Json -Depth 6
@@ -778,7 +1007,9 @@ try {
   $maps = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Set-MpPreference' -and $_.name -eq 'MAPSReporting' })
   Assert-True ($maps.Count -eq 1 -and [string]$maps[0].value -eq '2') 'uncaptured MAPSReporting did not return to the default'
   $removedSpyware = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' })
-  Assert-True ($removedSpyware.Count -eq 1) 'DisableAntiSpyware policy was not removed'
+  Assert-True ($removedSpyware.Count -eq 0) 're-enable removed DisableAntiSpyware'
+  $removedAntivirus = @($global:MasterDefenderCommands | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiVirus' })
+  Assert-True ($removedAntivirus.Count -eq 1) 'DisableAntiVirus policy was not removed'
   Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.kind -ne 'Set-MpPreference' -and $_.kind -ne 'Remove-Policy' -and $_.kind -ne 'Set-Policy' }).Count -eq 0) 're-enable changed something other than preferences and policy'
   Assert-True (@($global:MasterDefenderCommands | Where-Object { $_.name -eq 'WinDefend' -or $_.name -eq 'WdNisSvc' -or $_.name -eq 'MDCoreSvc' }).Count -eq 0) 're-enable issued a Defender service command'
   $enableCalls = @($global:MasterTestCalls | Where-Object { $_.arguments -eq '/E' -and $_.exe -match 'Wub_x64.exe' })
@@ -930,6 +1161,33 @@ try {
   $clearAt = $masterText.IndexOf("SetEnvironmentVariable('DIAGNOSTIC_WORKSTATION_TEST_FAIL_SWAP'")
   $enterAt = $masterText.IndexOf('Enter-MasterInstallerProcess')
   Assert-True (($clearAt -ge 0) -and ($enterAt -gt $clearAt)) 'production entry does not clear the test swap hook before elevation'
+  Assert-True ($blob.Contains('fail-swap.marker')) 'swap failure marker is not required'
+  Assert-True ($blob.Contains('diagnostic-workstation-test-fail-swap')) 'swap failure marker token is missing'
+  $markerData = Join-Path $temp 'marker-data'
+  $markerWork = Join-Path $temp 'marker-work'
+  New-Item -ItemType Directory -Path $markerData, $markerWork | Out-Null
+  Assert-True (-not (Test-HarnessFailSwapMarker $markerData)) 'missing swap marker was honored'
+  $inside = Join-Path $markerData 'fail-swap.marker'
+  Write-Utf8NoBom $inside 'diagnostic-workstation-test-fail-swap'
+  Write-Utf8NoBom (Join-Path $markerData 'fail-swap.location') ($inside + "`n")
+  Assert-True (-not (Test-HarnessFailSwapMarker $markerData)) 'a marker inside the installer data dir was honored'
+  $outside = Join-Path $markerWork 'fail-swap.marker'
+  Write-Utf8NoBom $outside 'diagnostic-workstation-test-fail-swap'
+  Write-Utf8NoBom (Join-Path $markerData 'fail-swap.location') ($outside + "`n")
+  Assert-True (Test-HarnessFailSwapMarker $markerData) 'harness work dir marker was not honored'
+  Write-Utf8NoBom $outside 'not-the-token'
+  Assert-True (-not (Test-HarnessFailSwapMarker $markerData)) 'a production file was honored as the swap marker'
+  Write-Utf8NoBom $outside 'diagnostic-workstation-test-fail-swap'
+  $markerLogs = Join-Path $temp 'marker-logs'
+  $script:HarnessFailSwapArmed = $true
+  Set-HarnessFailSwapArmed -InstallerData $markerData -LogDirectory $markerLogs
+  Assert-True (-not $script:HarnessFailSwapArmed) 'fail-swap armed without the harness switch'
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $markerLogs 'install-journal.log'))) 'an unswitched fail-swap pointer was journaled'
+  Set-HarnessFailSwapArmed -Allow -InstallerData $markerData -LogDirectory $markerLogs
+  Assert-True ($script:HarnessFailSwapArmed) 'harness switch did not arm fail-swap'
+  $armedJournal = [System.IO.File]::ReadAllText((Join-Path $markerLogs 'install-journal.log'))
+  Assert-True ($armedJournal.Contains('"step":"harness-fail-swap-armed"')) 'armed fail-swap was not journaled'
+  $script:HarnessFailSwapArmed = $false
 
   $tools = Join-Path $repo 'tools/security'
   $wub64 = Select-WubExecutable (Get-SecurityManifest $tools 'wub') 'x64'
@@ -1028,7 +1286,8 @@ try {
     if ($Command.kind -eq 'Set-MpPreference' -and $Command.name -eq 'DisableEmailScanning' -and [string]$Command.value -eq 'True') { throw 'access denied' }
   } -TamperPrompt { param($Message) return $true }
   Assert-True ($failed.status -eq 'failed') 'a Defender apply error was ignored'
-  Assert-True (@($rollback | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -ge 1) 'failed disable did not roll back policy'
+  Assert-True (@($rollback | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiVirus' }).Count -ge 1) 'failed disable did not roll back policy'
+  Assert-True (@($rollback | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 0) 'failed disable rolled back DisableAntiSpyware'
 
   Assert-True ((Get-DefenderCommandScope 'Set-Policy') -eq 'admin') 'policy writes left the admin process'
   Assert-True ((Get-DefenderCommandScope 'Remove-Policy') -eq 'admin') 'policy removal left the admin process'
@@ -1058,7 +1317,8 @@ try {
   Assert-True ($systemDeletes.Count -eq $systemRegisters.Count) 'a SYSTEM task was left registered'
   $preferenceBatch = @($systemRegisters[0].spec.commands)
   Assert-True ($preferenceBatch.Count -gt 0 -and @($preferenceBatch | Where-Object { $_.kind -ne 'Set-MpPreference' }).Count -eq 0) 'the SYSTEM batch was not only Set-MpPreference'
-  Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 1) 'DisableAntiSpyware was not written in the admin process'
+  Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiVirus' }).Count -eq 1) 'DisableAntiVirus was not written in the admin process'
+  Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 0) 'DisableAntiSpyware was written in the admin process'
   Assert-True (@($systemAdmin | Where-Object { $_.kind -eq 'Set-MpPreference' }).Count -eq 0) 'a SYSTEM command ran in the admin sink'
   Assert-True ($systemRegisters[0].spec.taskName.StartsWith('DiagnosticWorkstation-Defender-')) 'task name is not transient'
   Assert-True ($systemRegisters[0].spec.userId -eq 'SYSTEM') 'task principal is not SYSTEM'
@@ -1085,7 +1345,8 @@ try {
   Assert-True ($enableDeletes.Count -eq $enableRegisters.Count) 're-enable left a SYSTEM task registered'
   Assert-True (@($enableRegisters[0].spec.commands | Where-Object { $_.kind -ne 'Set-MpPreference' }).Count -eq 0) 're-enable sent a non-preference command to SYSTEM'
   Assert-True (@($enableRegisters[0].spec.commands | Where-Object { $_.name -eq 'DisableRealtimeMonitoring' }).Count -eq 1) 're-enable did not restore realtime monitoring as SYSTEM'
-  Assert-True (@($enableAdmin | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 1) 're-enable did not remove policy in the admin process'
+  Assert-True (@($enableAdmin | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiVirus' }).Count -eq 1) 're-enable did not remove policy in the admin process'
+  Assert-True (@($enableAdmin | Where-Object { $_.kind -eq 'Remove-Policy' -and $_.name -eq 'DisableAntiSpyware' }).Count -eq 0) 're-enable removed DisableAntiSpyware'
 
   $deniedLogs = Join-Path $temp 'defender-denied-logs'
   New-Item -ItemType Directory -Force -Path $deniedLogs | Out-Null
