@@ -169,6 +169,36 @@ try {
     [System.IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), $utf8)
   }
 
+  function Write-HarnessStub {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $lines = @(
+      '[CmdletBinding()]',
+      'param(',
+      '  [string]$Brand,',
+      '  [string]$Channel,',
+      '  [string]$Tag,',
+      '  [string]$Source,',
+      '  [switch]$OfflineOnly,',
+      '  [switch]$VerifyOnly,',
+      '  [switch]$AllowDowngrade,',
+      '  [switch]$Library,',
+      '  [switch]$ElevatedRelaunch,',
+      '  [switch]$AllowHarnessFailSwap',
+      ')',
+      '$out = [string]$env:DW_SETUP_HARNESS_OUT',
+      'if ([string]::IsNullOrWhiteSpace($out)) { exit 17 }',
+      '$bound = @($PSBoundParameters.Keys) -join '',''',
+      '$line = [Environment]::CommandLine',
+      '[System.IO.File]::WriteAllText($out, ($bound + [char]10 + $line))',
+      'if ($AllowHarnessFailSwap) { exit 21 }',
+      'if ($PSBoundParameters.ContainsKey(''AllowHarnessFailSwap'')) { exit 21 }',
+      'if ($line -match ''AllowHarnessFailSwap'') { exit 22 }',
+      'exit 0'
+    )
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), $utf8)
+  }
+
   function Write-RawBytes {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][byte[]]$Bytes)
     $parent = Split-Path -Parent $Path
@@ -231,6 +261,11 @@ try {
     Write-ZoneIdentifier $sourcePackage
     $sourcePayload = Join-Path -Path $sourceCase -ChildPath 'payload'
     Write-RawBytes (Join-Path -Path $sourcePayload -ChildPath 'marker.txt') ([byte[]](111, 107, 10))
+    $harnessRoot = Join-Path -Path $caseRoot -ChildPath 'harness'
+    Copy-VerifiedTree $extracted $harnessRoot
+    Write-HarnessStub (Join-PackageRelative $harnessRoot 'installer/Master/Install-Master.ps1')
+    Update-StagedSetupExe -StageRoot $harnessRoot -Nupkg $nupkg
+    Write-ZoneIdentifier $harnessRoot
 
     Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy Restricted -Force
     Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Restricted -Force
@@ -288,6 +323,26 @@ try {
     $expectedSource = [System.IO.Path]::GetFullPath($sourcePayload)
     if (-not $recordedSource.Equals($expectedSource, [System.StringComparison]::OrdinalIgnoreCase)) { throw "relative -Source resolved to $recordedSource" }
     Remove-Item Env:DW_SETUP_SOURCE_OUT -ErrorAction SilentlyContinue
+
+    $harnessOut = Join-Path -Path $caseRoot -ChildPath 'harness-out.txt'
+    $env:DW_SETUP_HARNESS_OUT = $harnessOut
+    $harnessInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $harnessInfo.FileName = Join-Path -Path $harnessRoot -ChildPath 'Setup.exe'
+    $harnessInfo.Arguments = '-Brand mercedes -AllowHarnessFailSwap'
+    $harnessInfo.UseShellExecute = $false
+    $harnessInfo.WorkingDirectory = $harnessRoot
+    $harnessProc = New-Object System.Diagnostics.Process
+    $harnessProc.StartInfo = $harnessInfo
+    [void]$harnessProc.Start()
+    if (-not $harnessProc.WaitForExit(60000)) {
+      try { $harnessProc.Kill() } catch { }
+      throw 'harness switch setup did not exit'
+    }
+    if ([int]$harnessProc.ExitCode -ne 0) { throw ("Setup forwarded -AllowHarnessFailSwap ({0})" -f $harnessProc.ExitCode) }
+    if (-not (Test-Path -LiteralPath $harnessOut)) { throw 'harness switch child did not record its command' }
+    $harnessText = [System.IO.File]::ReadAllText($harnessOut)
+    if ($harnessText -match 'AllowHarnessFailSwap') { throw 'Install-Master received -AllowHarnessFailSwap' }
+    Remove-Item Env:DW_SETUP_HARNESS_OUT -ErrorAction SilentlyContinue
 
     $swapGo = Join-Path -Path $caseRoot -ChildPath 'swap-go.txt'
     $swapPath = Join-Path -Path $caseRoot -ChildPath 'swap-path.txt'
@@ -347,6 +402,10 @@ try {
     Remove-Item Env:DW_SETUP_SWAP_GO -ErrorAction SilentlyContinue
     Remove-Item Env:DW_SETUP_SWAP_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:DW_SETUP_SOURCE_OUT -ErrorAction SilentlyContinue
+    Remove-Item Env:DW_SETUP_HARNESS_OUT -ErrorAction SilentlyContinue
+    if ($harnessProc -and -not $harnessProc.HasExited) {
+      try { $harnessProc.Kill() } catch { }
+    }
     if ($sourceProc -and -not $sourceProc.HasExited) {
       try { $sourceProc.Kill() } catch { }
     }
