@@ -27,7 +27,7 @@ Known issues / untested:
 
 - no VM install test yet
 - DPI, multi-monitor, and the real PS 5.1 runtime are unverified
-- a blank `Install ` prompt appears when `brands.json` lacks the embedded brand
+- the pinned WorkstationManager.exe still shows a blank `Install ` prompt when `brands.json` lacks the embedded brand. `manager/` source now shows a Brand not resolved error instead. The pinned exe was not rebuilt.
 
 File list (SHA-256, uncompressed bytes, path):
 

@@ -84,7 +84,6 @@ function Receive-ApprovedPayload {
     [string]$Source,
     [string]$RepoRoot,
     [switch]$OfflineOnly,
-    [string]$WorkDirectory,
     [scriptblock]$Downloader
   )
   $tag = [string]$Release.tag
@@ -100,7 +99,8 @@ function Receive-ApprovedPayload {
   if (-not $OfflineOnly -and -not $Source) {
     $zipUrl = Get-ApprovedAssetUrl $Brand $tag $asset
     $manifestUrl = Get-ApprovedAssetUrl $Brand $tag $manifestName
-    $temp = Join-Path -Path $WorkDirectory -ChildPath 'download'
+    $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ('dw-download-' + [guid]::NewGuid().ToString('n'))
+    $temp = Join-Path -Path $tempRoot -ChildPath 'download'
     try {
       Save-ApprovedDownload $zipUrl (Join-Path $temp $asset) $Downloader
       Save-ApprovedDownload $manifestUrl (Join-Path $temp $manifestName) $Downloader
@@ -110,10 +110,11 @@ function Receive-ApprovedPayload {
         Manifest = (Join-Path $temp $manifestName)
         ZipUrl = $zipUrl
         ManifestUrl = $manifestUrl
+        DownloadRoot = $tempRoot
       }
     } catch {
       $onlineError = $_.Exception.Message
-      if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+      if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
   }
   if (-not $offline) { $offline = Find-OfflinePayload $tag $Source $RepoRoot $asset $manifestName }
@@ -208,6 +209,38 @@ function Assert-ExpandedFiles {
   }
 }
 
+function Read-PayloadSnapshot {
+  param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Label)
+  try {
+    return [System.IO.File]::ReadAllBytes($Path)
+  } catch {
+    throw "Missing $Label. Nothing was installed."
+  }
+}
+
+function Get-PayloadSha256 {
+  param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { $hash = $sha.ComputeHash($Bytes) } finally { $sha.Dispose() }
+  return ([System.BitConverter]::ToString($hash)).Replace('-', '').ToLowerInvariant()
+}
+
+function ConvertFrom-PayloadJson {
+  param([Parameter(Mandatory = $true)][byte[]]$Bytes, [Parameter(Mandatory = $true)][string]$Label)
+  $stream = New-Object System.IO.MemoryStream
+  $reader = $null
+  try {
+    $stream.Write($Bytes, 0, $Bytes.Length)
+    $stream.Position = 0
+    $reader = New-Object System.IO.StreamReader($stream, $true)
+    $text = $reader.ReadToEnd()
+  } finally {
+    if ($reader) { $reader.Dispose() } else { $stream.Dispose() }
+  }
+  if ([string]::IsNullOrWhiteSpace($text)) { throw "Empty JSON $Label" }
+  return ($text | ConvertFrom-Json)
+}
+
 function Open-VerifiedBundle {
   param(
     [Parameter(Mandatory = $true)][string]$Brand,
@@ -216,17 +249,27 @@ function Open-VerifiedBundle {
     [Parameter(Mandatory = $true)][string]$ManifestPath,
     [Parameter(Mandatory = $true)][string]$Staging
   )
-  if (-not [string]::IsNullOrWhiteSpace([string]$Release.manifestSha256)) {
-    $null = Assert-Sha256 $ManifestPath ([string]$Release.manifestSha256) 'update-manifest.json'
+  if ([string]::IsNullOrWhiteSpace([string]$Release.manifestSha256)) {
+    throw 'update-manifest.json SHA-256 is required. Nothing was installed.'
   }
-  $manifest = Read-JsonFile $ManifestPath
+  $manifestBytes = Read-PayloadSnapshot $ManifestPath 'update-manifest.json'
+  $manifestHash = Get-PayloadSha256 $manifestBytes
+  if ($manifestHash -ne ([string]$Release.manifestSha256).ToLowerInvariant()) {
+    throw 'hash mismatch for update-manifest.json'
+  }
+  $manifest = ConvertFrom-PayloadJson $manifestBytes 'update-manifest.json'
   Assert-ManifestIdentity $manifest $Brand $Release
-  $zipItem = Get-Item -LiteralPath $ZipPath
-  if ([int64]$zipItem.Length -ne [int64]$Release.bytes) { throw 'Package size mismatch. Nothing was installed.' }
-  $null = Assert-Sha256 $ZipPath ([string]$Release.sha256) 'workstation.zip'
+  $zipBytes = Read-PayloadSnapshot $ZipPath 'workstation.zip'
+  if ([int64]$zipBytes.Length -ne [int64]$Release.bytes) { throw 'Package size mismatch. Nothing was installed.' }
+  $zipHash = Get-PayloadSha256 $zipBytes
+  if ($zipHash -ne ([string]$Release.sha256).ToLowerInvariant()) { throw 'hash mismatch for workstation.zip' }
   Import-ZipAssembly
-  $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+  $zipStream = New-Object System.IO.MemoryStream
+  $zip = $null
   try {
+    $zipStream.Write($zipBytes, 0, $zipBytes.Length)
+    $zipStream.Position = 0
+    $zip = [System.IO.Compression.ZipArchive]::new($zipStream, [System.IO.Compression.ZipArchiveMode]::Read, $true)
     $members = Assert-ZipMembers $zip $manifest
     if (Test-Path -LiteralPath $Staging) { Remove-Item -LiteralPath $Staging -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $Staging | Out-Null
@@ -238,7 +281,8 @@ function Open-VerifiedBundle {
       throw
     }
   } finally {
-    $zip.Dispose()
+    if ($zip) { $zip.Dispose() }
+    $zipStream.Dispose()
   }
   return $manifest
 }

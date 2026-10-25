@@ -248,8 +248,11 @@ function Register-SecurityShortcuts {
   }
   New-Item -ItemType Directory -Force -Path $StartMenuRoot | Out-Null
   $powershell = 'powershell.exe'
-  if (Test-MasterHostWindows -and $env:SystemRoot) {
-    $powershell = Join-Path -Path $env:SystemRoot -ChildPath 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  if (Test-MasterHostWindows) {
+    $system = [Environment]::GetFolderPath('System')
+    if (-not [string]::IsNullOrWhiteSpace($system)) {
+      $powershell = Join-Path -Path $system -ChildPath 'WindowsPowerShell\v1.0\powershell.exe'
+    }
   }
   $entries = @(
     [pscustomobject]@{ name = 'Re-enable Windows Update and Defender'; script = 'Enable-Security.ps1'; arguments = "-Brand $Brand -Action enable" },
